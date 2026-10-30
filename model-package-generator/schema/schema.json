@@ -1,0 +1,77 @@
+
+{
+  "schemaVersion": "1.0",
+  "packageName": "com.nexbank.account.entity",
+  "tables": [
+    {
+      "name": "customers",
+      "className": "Customer",
+      "fields": [
+        {
+          "name": "id",
+          "type": "BIGINT",
+          "primaryKey": true,
+          "generated": true
+        },
+        {
+          "name": "first_name",
+          "type": "VARCHAR",
+          "length": 100,
+          "nullable": false
+        },
+        {
+          "name": "last_name",
+          "type": "VARCHAR",
+          "length": 100
+        },
+        {
+          "name": "email",
+          "type": "VARCHAR",
+          "length": 255,
+          "unique": true,
+          "nullable": false
+        }
+      ],
+      "relationships": []
+    },
+    {
+      "name": "accounts",
+      "className": "Account",
+      "fields": [
+        {
+          "name": "id",
+          "type": "BIGINT",
+          "primaryKey": true,
+          "generated": true
+        },
+        {
+          "name": "account_number",
+          "type": "VARCHAR",
+          "length": 30,
+          "nullable": false
+        },
+        {
+          "name": "balance",
+          "type": "DECIMAL",
+          "precision": 19,
+          "scale": 2
+        },
+        {
+          "name": "customer_id",
+          "type": "BIGINT",
+          "nullable": false
+        }
+      ],
+      "relationships": [
+        {
+          "type": "MANY_TO_ONE",
+          "field": "customer",
+          "target": "Customer",
+          "joinColumn": "customer_id",
+          "referencedColumn": "id",
+          "optional": false
+        }
+      ]
+    }
+  ]
+}
