@@ -1,18 +1,25 @@
 package com.codegenerator.model_package_generator;
 
-
+import com.codegenerator.model_package_generator.generator.DtoGenerator;
 import com.codegenerator.model_package_generator.generator.EntityGenerator;
+import com.codegenerator.model_package_generator.generator.RepositoryGenerator;
 import com.codegenerator.model_package_generator.mapper.DataTypeMapper;
 import com.codegenerator.model_package_generator.model.DatabaseSchema;
 import com.codegenerator.model_package_generator.model.ResolvedRelationship;
+import com.codegenerator.model_package_generator.model.dto.DtoDefinition;
+import com.codegenerator.model_package_generator.model.dto.DtoSchema;
+import com.codegenerator.model_package_generator.parser.DtoSchemaParser;
 import com.codegenerator.model_package_generator.parser.SchemaParser;
+import com.codegenerator.model_package_generator.resolver.DtoFieldTypeResolver;
 import com.codegenerator.model_package_generator.resolver.RelationshipResolver;
+import com.codegenerator.model_package_generator.validation.DtoSchemaValidator;
 import com.codegenerator.model_package_generator.validation.SchemaValidator;
 import com.codegenerator.model_package_generator.writer.SourceFileWriter;
 import com.squareup.javapoet.JavaFile;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -21,29 +28,67 @@ public class Main {
     public static void main(String[] args) {
 
         try {
+
             // 1. Define input and output paths.
-            Path inputPath = Path.of("D:\\Projects\\CodeGeneratorV1\\model-package-generator\\schema\\schema.json");
+
+            Path entitySchemaPath = Path.of(
+                    "schema",
+                    "schema.json"
+            );
+
+            Path dtoSchemaPath = Path.of(
+                    "schema",
+                    "dto-schema.json"
+            );
+
             Path outputPath = Path.of("generated");
 
-            // 2. Parse JSON schema.
+
+            // 2. Parse entity schema.
+
             SchemaParser schemaParser = new SchemaParser();
 
-            DatabaseSchema schema = schemaParser.parse(inputPath);
+            DatabaseSchema schema = schemaParser.parse(entitySchemaPath);
 
-            System.out.println("JSON parsing successful!");
+            System.out.println("Entity JSON parsing successful!");
 
-            // 3. Initialize datatype mapper.
+
+            // 3. Parse DTO schema.
+
+            DtoSchemaParser dtoSchemaParser = new DtoSchemaParser();
+
+            DtoSchema dtoSchema = dtoSchemaParser.parse(dtoSchemaPath);
+
+            System.out.println("DTO JSON parsing successful!");
+
+
+            // 4. Initialize datatype mapper.
+
             DataTypeMapper dataTypeMapper = new DataTypeMapper();
 
-            // 4. Validate schema.
+
+            // 5. Validate entity schema.
+
             SchemaValidator schemaValidator =
                     new SchemaValidator(dataTypeMapper);
 
             schemaValidator.validate(schema);
 
-            System.out.println("Schema validation successful!");
+            System.out.println("Entity schema validation successful!");
 
-            // 5. Resolve entity relationships.
+
+            // 6. Validate DTO schema against entity schema.
+
+            DtoSchemaValidator dtoSchemaValidator =
+                    new DtoSchemaValidator();
+
+            dtoSchemaValidator.validate(dtoSchema, schema);
+
+            System.out.println("DTO schema validation successful!");
+
+
+            // 7. Resolve entity relationships.
+
             RelationshipResolver relationshipResolver =
                     new RelationshipResolver();
 
@@ -69,7 +114,9 @@ public class Main {
                 });
             });
 
-            // 6. Generate JPA entity classes.
+
+            // 8. Generate JPA entity classes.
+
             EntityGenerator entityGenerator =
                     new EntityGenerator(dataTypeMapper);
 
@@ -78,31 +125,133 @@ public class Main {
 
             System.out.println("\nEntity generation successful!");
 
-            generatedEntities.forEach((entityName, javaFile) -> {
+
+            // 9. Generate repository interfaces.
+
+            RepositoryGenerator repositoryGenerator =
+                    new RepositoryGenerator(dataTypeMapper);
+
+            Map<String, JavaFile> generatedRepositories =
+                    repositoryGenerator.generate(schema);
+
+            System.out.println("\nRepository generation successful!");
+
+
+            // 10. Initialize DTO field type resolver.
+
+            DtoFieldTypeResolver dtoFieldTypeResolver =
+                    new DtoFieldTypeResolver(dataTypeMapper);
+
+
+            // 11. Generate DTO classes.
+
+            DtoGenerator dtoGenerator =
+                    new DtoGenerator(dtoFieldTypeResolver);
+
+            Map<String, JavaFile> generatedDtos =
+                    dtoGenerator.generate(
+                            dtoSchema,
+                            schema,
+                            relationships
+                    );
+
+            System.out.println("\nDTO generation successful!");
+
+
+            // 12. Display generated DTO definitions.
+
+            for (DtoDefinition dto : dtoSchema.dtos()) {
 
                 System.out.println(
-                        "\n========== " + entityName + ".java =========="
+                        "\nDTO: " + dto.name()
+                                + " | Source Entity: " + dto.sourceEntity()
+                                + " | Type: " + dto.type()
                 );
 
+            }
+
+
+            // 13. Display generated Java files.
+
+            System.out.println("\n========== GENERATED ENTITIES ==========");
+
+            generatedEntities.forEach((name, javaFile) -> {
+
+                System.out.println("\n========== " + name + " ==========");
                 System.out.println(javaFile);
+
             });
 
-            // 7. Write generated Java files to disk.
+
+            System.out.println("\n========== GENERATED REPOSITORIES ==========");
+
+            generatedRepositories.forEach((name, javaFile) -> {
+
+                System.out.println("\n========== " + name + " ==========");
+                System.out.println(javaFile);
+
+            });
+
+
+            System.out.println("\n========== GENERATED DTOS ==========");
+
+            generatedDtos.forEach((name, javaFile) -> {
+
+                System.out.println("\n========== " + name + " ==========");
+                System.out.println(javaFile);
+
+            });
+
+
+            // 14. Combine all generated Java files.
+
+            Map<String, JavaFile> allGeneratedFiles =
+                    new LinkedHashMap<>();
+
+            allGeneratedFiles.putAll(generatedEntities);
+
+            allGeneratedFiles.putAll(generatedRepositories);
+
+            allGeneratedFiles.putAll(generatedDtos);
+
+
+            // 15. Write all generated files to disk.
+
             SourceFileWriter sourceFileWriter =
                     new SourceFileWriter();
 
             sourceFileWriter.write(
-                    generatedEntities,
+                    allGeneratedFiles,
                     outputPath
             );
 
+            System.out.println("\nAll source files written successfully!");
+
+
+            // 16. Final summary.
+
+            System.out.println("\n========== GENERATION SUMMARY ==========");
+
             System.out.println(
-                    "\nSource files written successfully!"
+                    "Entities generated: " + generatedEntities.size()
             );
 
             System.out.println(
-                    "\nAll checks passed! Entity generation completed."
+                    "Repositories generated: " + generatedRepositories.size()
             );
+
+            System.out.println(
+                    "DTOs generated: " + generatedDtos.size()
+            );
+
+            System.out.println(
+                    "Total Java files generated: " + allGeneratedFiles.size()
+            );
+
+            System.out.println(
+                    "\nAll checks passed! Code generation completed successfully."
+            );
+
 
         } catch (IOException e) {
 

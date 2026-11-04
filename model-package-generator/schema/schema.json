@@ -1,6 +1,6 @@
 
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "2.0",
   "packageName": "com.nexbank.account.entity",
   "tables": [
     {
@@ -69,7 +69,9 @@
           "target": "Customer",
           "joinColumn": "customer_id",
           "referencedColumn": "id",
-          "optional": false
+          "inverseField": "accounts",
+          "optional": false,
+          "fetch": "LAZY"
         }
       ]
     }
