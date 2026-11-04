@@ -2,12 +2,16 @@ package com.nexbank.account.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
 import java.lang.Long;
 import java.lang.String;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(
@@ -43,4 +47,10 @@ public class Customer {
       length = 255
   )
   private String email;
+
+  @OneToMany(
+      mappedBy = "customer",
+      fetch = FetchType.LAZY
+  )
+  private List<Account> accounts = new ArrayList<>();
 }
