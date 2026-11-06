@@ -18,7 +18,9 @@ import com.codegenerator.model_package_generator.writer.SourceFileWriter;
 import com.squareup.javapoet.JavaFile;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -55,12 +57,23 @@ public class Main {
 
             // 3. Parse DTO schema.
 
-            DtoSchemaParser dtoSchemaParser = new DtoSchemaParser();
+// 3. Parse DTO schema (optional).
 
-            DtoSchema dtoSchema = dtoSchemaParser.parse(dtoSchemaPath);
+            DtoSchema dtoSchema = null;
 
-            System.out.println("DTO JSON parsing successful!");
+            if (Files.exists(dtoSchemaPath) && Files.size(dtoSchemaPath) > 0) {
 
+                DtoSchemaParser dtoParser = new DtoSchemaParser();
+                dtoSchema = dtoParser.parse(dtoSchemaPath);
+
+                System.out.println("DTO JSON parsing successful!");
+
+            } else {
+
+                System.out.println(
+                        "DTO schema not provided. Skipping DTO generation."
+                );
+            }
 
             // 4. Initialize datatype mapper.
 
@@ -79,12 +92,18 @@ public class Main {
 
             // 6. Validate DTO schema against entity schema.
 
-            DtoSchemaValidator dtoSchemaValidator =
-                    new DtoSchemaValidator();
+            // 6. Validate DTO schema against entity schema (optional).
 
-            dtoSchemaValidator.validate(dtoSchema, schema);
+            if (dtoSchema != null) {
 
-            System.out.println("DTO schema validation successful!");
+                DtoSchemaValidator dtoSchemaValidator =
+                        new DtoSchemaValidator();
+
+                dtoSchemaValidator.validate(dtoSchema, schema);
+
+                System.out.println("DTO schema validation successful!");
+
+            }
 
 
             // 7. Resolve entity relationships.
@@ -137,36 +156,43 @@ public class Main {
             System.out.println("\nRepository generation successful!");
 
 
-            // 10. Initialize DTO field type resolver.
+            // 10. Initialize DTO generation output.
 
-            DtoFieldTypeResolver dtoFieldTypeResolver =
-                    new DtoFieldTypeResolver(dataTypeMapper);
+            Map<String, JavaFile> generatedDtos = new LinkedHashMap<>();
 
+// 11. Generate DTO classes (optional).
 
-            // 11. Generate DTO classes.
+            if (dtoSchema != null) {
 
-            DtoGenerator dtoGenerator =
-                    new DtoGenerator(dtoFieldTypeResolver);
+                DtoFieldTypeResolver dtoFieldTypeResolver =
+                        new DtoFieldTypeResolver(dataTypeMapper);
 
-            Map<String, JavaFile> generatedDtos =
-                    dtoGenerator.generate(
-                            dtoSchema,
-                            schema,
-                            relationships
+                DtoGenerator dtoGenerator =
+                        new DtoGenerator(dtoFieldTypeResolver);
+
+                generatedDtos = dtoGenerator.generate(
+                        dtoSchema,
+                        schema,
+                        relationships
+                );
+
+                System.out.println("\nDTO generation successful!");
+
+                // 12. Display generated DTO definitions.
+
+                for (DtoDefinition dto : dtoSchema.dtos()) {
+
+                    System.out.println(
+                            "\nDTO: " + dto.name()
+                                    + " | Source Entity: " + dto.sourceEntity()
+                                    + " | Type: " + dto.type()
                     );
 
-            System.out.println("\nDTO generation successful!");
+                }
 
+            } else {
 
-            // 12. Display generated DTO definitions.
-
-            for (DtoDefinition dto : dtoSchema.dtos()) {
-
-                System.out.println(
-                        "\nDTO: " + dto.name()
-                                + " | Source Entity: " + dto.sourceEntity()
-                                + " | Type: " + dto.type()
-                );
+                System.out.println("\nDTO generation skipped.");
 
             }
 

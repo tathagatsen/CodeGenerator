@@ -1,4 +1,4 @@
-package com.nexbank.account.entity;
+package com.nexbank.transaction.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -23,9 +23,10 @@ public class Customer {
       strategy = GenerationType.IDENTITY
   )
   @Column(
-      name = "id"
+      name = "customer_id",
+      nullable = false
   )
-  private Long id;
+  private Long customerId;
 
   @Column(
       name = "first_name",
@@ -35,16 +36,10 @@ public class Customer {
   private String firstName;
 
   @Column(
-      name = "last_name",
-      length = 100
-  )
-  private String lastName;
-
-  @Column(
       name = "email",
       nullable = false,
       unique = true,
-      length = 255
+      length = 254
   )
   private String email;
 

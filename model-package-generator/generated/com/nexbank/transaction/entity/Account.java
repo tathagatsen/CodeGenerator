@@ -1,4 +1,4 @@
-package com.nexbank.account.entity;
+package com.nexbank.transaction.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -23,20 +23,23 @@ public class Account {
       strategy = GenerationType.IDENTITY
   )
   @Column(
-      name = "id"
+      name = "account_id",
+      nullable = false
   )
-  private Long id;
+  private Long accountId;
 
   @Column(
       name = "account_number",
       nullable = false,
+      unique = true,
       length = 30
   )
   private String accountNumber;
 
   @Column(
       name = "balance",
-      precision = 19,
+      nullable = false,
+      precision = 15,
       scale = 2
   )
   private BigDecimal balance;
@@ -47,7 +50,7 @@ public class Account {
   )
   @JoinColumn(
       name = "customer_id",
-      referencedColumnName = "id",
+      referencedColumnName = "customer_id",
       nullable = false
   )
   private Customer customer;

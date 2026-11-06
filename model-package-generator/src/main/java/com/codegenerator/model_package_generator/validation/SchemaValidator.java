@@ -109,6 +109,7 @@ public class SchemaValidator {
         throwIfErrors(errors);
     }
 
+
     private void validateFields(
             TableDefinition table,
             List<String> errors) {
@@ -120,7 +121,7 @@ public class SchemaValidator {
         }
 
         Set<String> fieldNames = new HashSet<>();
-        int primaryKeyCount = 0;
+        List<FieldDefinition> primaryKeyFields = new ArrayList<>();
 
         for (FieldDefinition field : table.fields()) {
 
@@ -156,10 +157,18 @@ public class SchemaValidator {
                         + field.name() + "'.");
             }
 
+            // Collect primary-key fields
             if (Boolean.TRUE.equals(field.primaryKey())) {
-                primaryKeyCount++;
+                primaryKeyFields.add(field);
+
+                if (Boolean.TRUE.equals(field.nullable())) {
+                    errors.add("Table '" + table.name()
+                            + "': Primary key field '" + field.name()
+                            + "' cannot be nullable.");
+                }
             }
 
+            // Generated fields must be primary keys
             if (Boolean.TRUE.equals(field.generated())
                     && !Boolean.TRUE.equals(field.primaryKey())) {
 
@@ -196,14 +205,24 @@ public class SchemaValidator {
             }
         }
 
-        // V1 supports one primary key per entity.
-        if (primaryKeyCount == 0) {
+        // Every table must have at least one primary key
+        if (primaryKeyFields.isEmpty()) {
             errors.add("Table '" + table.name()
                     + "': No primary key defined.");
-        } else if (primaryKeyCount > 1) {
-            errors.add("Table '" + table.name()
-                    + "': Multiple primary keys detected. "
-                    + "Composite keys are not supported in V1.");
+        }
+
+        // Composite primary-key validation
+        if (primaryKeyFields.size() > 1) {
+
+            for (FieldDefinition primaryKey : primaryKeyFields) {
+
+                if (Boolean.TRUE.equals(primaryKey.generated())) {
+                    errors.add("Table '" + table.name()
+                            + "': Auto-generated primary keys are not "
+                            + "supported for composite keys. Field: "
+                            + primaryKey.name());
+                }
+            }
         }
     }
 
