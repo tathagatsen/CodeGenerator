@@ -58,6 +58,9 @@ public class EntityGenerator {
     private static final ClassName FETCH_TYPE =
             ClassName.get("jakarta.persistence", "FetchType");
 
+    private static final ClassName MAPS_ID =
+            ClassName.get("jakarta.persistence", "MapsId");
+
     private final DataTypeMapper dataTypeMapper;
 
     public EntityGenerator(DataTypeMapper dataTypeMapper) {
@@ -524,6 +527,15 @@ public class EntityGenerator {
 
                 if (relationship.owningSide()) {
 
+                    // Add @MapsId only when explicitly configured.
+                    if (relationship.mapsId() != null
+                            && !relationship.mapsId().isBlank()) {
+
+                        fieldBuilder.addAnnotation(
+                                buildMapsIdAnnotation(relationship)
+                        );
+                    }
+
                     fieldBuilder.addAnnotation(
                             buildJoinColumn(relationship)
                     );
@@ -567,6 +579,14 @@ public class EntityGenerator {
                 fieldBuilder.addAnnotation(annotation.build());
 
                 if (relationship.owningSide()) {
+
+                    if (relationship.mapsId() != null
+                            && !relationship.mapsId().isBlank()) {
+
+                        fieldBuilder.addAnnotation(
+                                buildMapsIdAnnotation(relationship)
+                        );
+                    }
 
                     fieldBuilder.addAnnotation(
                             buildJoinColumn(relationship)
@@ -667,7 +687,17 @@ public class EntityGenerator {
     // =========================================================
     // JOIN COLUMN
     // =========================================================
+    private AnnotationSpec buildMapsIdAnnotation(
+            ResolvedRelationship relationship) {
 
+        return AnnotationSpec.builder(MAPS_ID)
+                .addMember(
+                        "value",
+                        "$S",
+                        relationship.mapsId()
+                )
+                .build();
+    }
     private AnnotationSpec buildJoinColumn(
             ResolvedRelationship relationship) {
 

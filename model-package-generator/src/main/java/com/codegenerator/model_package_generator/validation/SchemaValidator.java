@@ -236,7 +236,7 @@ public class SchemaValidator {
         }
 
         Set<String> relationshipFields = new HashSet<>();
-
+        Set<String> mapsIdFields = new HashSet<>();
         for (RelationshipDefinition relationship : source.relationships()) {
 
             if (relationship == null) {
@@ -295,6 +295,15 @@ public class SchemaValidator {
             }
 
             String type = relationship.type().toUpperCase(Locale.ROOT);
+
+            validateMapsId(
+                    source,
+                    target,
+                    relationship,
+                    type,
+                    mapsIdFields,
+                    errors
+            );
 
             // Relationships defined on the owning side.
             if ("MANY_TO_ONE".equals(type)
@@ -381,5 +390,126 @@ public class SchemaValidator {
         if (!errors.isEmpty()) {
             throw new SchemaValidationException(errors);
         }
+    }
+
+    private void validateMapsId(
+            TableDefinition source,
+            TableDefinition target,
+            RelationshipDefinition relationship,
+            String type,
+            Set<String> mapsIdFields,
+            List<String> errors) {
+
+        String prefix = "Table '" + source.name() + "': ";
+
+        // No @MapsId mapping requested
+        if (relationship.mapsId() == null) {
+            return;
+        }
+
+        String mapsId = relationship.mapsId();
+
+        if (isBlank(mapsId)) {
+            errors.add(prefix + "mapsId cannot be empty.");
+            return;
+        }
+
+        // Stage 1 supports only owning-side MANY_TO_ONE and ONE_TO_ONE.
+        if (!"MANY_TO_ONE".equals(type)
+                && !"ONE_TO_ONE".equals(type)) {
+
+            errors.add(prefix
+                    + "mapsId is supported only for MANY_TO_ONE "
+                    + "and ONE_TO_ONE relationships.");
+
+            return;
+        }
+
+        // Collect source primary-key fields.
+        List<FieldDefinition> sourcePrimaryKeys =
+                getPrimaryKeyFields(source);
+
+        // @MapsId in this stage requires a composite child PK.
+        if (sourcePrimaryKeys.size() <= 1) {
+            errors.add(prefix
+                    + "mapsId requires a composite primary key "
+                    + "in the source entity.");
+            return;
+        }
+
+        // Find the corresponding embedded ID component.
+        FieldDefinition mappedIdField = sourcePrimaryKeys.stream()
+                .filter(field ->
+                        toCamelCase(field.name())
+                                .equalsIgnoreCase(mapsId))
+                .findFirst()
+                .orElse(null);
+
+        if (mappedIdField == null) {
+            errors.add(prefix
+                    + "mapsId '" + mapsId
+                    + "' does not match any primary-key field "
+                    + "in the source entity.");
+            return;
+        }
+
+        // Ensure that the FK column and embedded ID component
+        // represent the same database column.
+        if (isBlank(relationship.joinColumn())
+                || !mappedIdField.name().equalsIgnoreCase(
+                relationship.joinColumn())) {
+
+            errors.add(prefix
+                    + "mapsId '" + mapsId
+                    + "' must map to the same database column "
+                    + "specified by joinColumn. Expected: "
+                    + mappedIdField.name());
+        }
+
+        // Prevent multiple relationships from mapping
+        // to the same embedded ID component.
+        if (!mapsIdFields.add(mapsId.toLowerCase(Locale.ROOT))) {
+            errors.add(prefix
+                    + "Duplicate mapsId mapping: '" + mapsId + "'.");
+        }
+
+        // Stage 1 supports parent entities with single-column PKs.
+        List<FieldDefinition> targetPrimaryKeys =
+                getPrimaryKeyFields(target);
+
+        if (targetPrimaryKeys.size() != 1) {
+            errors.add(prefix
+                    + "Stage 1 @MapsId supports only relationships "
+                    + "to entities with a single-column primary key. "
+                    + "Target: " + target.className());
+            return;
+        }
+
+        FieldDefinition targetPrimaryKey = targetPrimaryKeys.get(0);
+
+        // referencedColumn must point to the parent's PK.
+        if (isBlank(relationship.referencedColumn())
+                || !targetPrimaryKey.name().equalsIgnoreCase(
+                relationship.referencedColumn())) {
+
+            errors.add(prefix
+                    + "For @MapsId, referencedColumn must reference "
+                    + "the target entity's primary-key column: "
+                    + targetPrimaryKey.name());
+        }
+    }
+
+    private List<FieldDefinition> getPrimaryKeyFields(
+            TableDefinition table) {
+
+        if (table.fields() == null) {
+            return Collections.emptyList();
+        }
+
+        return table.fields().stream()
+                .filter(Objects::nonNull)
+                .filter(field ->
+                        Boolean.TRUE.equals(field.primaryKey()))
+                .toList();
     }
 }
