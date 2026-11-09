@@ -1,752 +1,673 @@
-# Code Generator V2 — Complete Ruleset
+# CodeGenerator V2 — Updated Ruleset
 
-**Scope:** Java 21 · Spring Data JPA · Entity + Repository + DTO generation  
-**Specification:** V2
+**Updated:** 9 November 2026  
+**Scope:** Java 21, Jakarta Persistence, Spring Data JPA, JavaPoet, Jackson  
+**Coverage:** Entities, repositories, optional DTOs, composite identifiers, and Stage 1 `@MapsId`.
 
-## 1. Purpose
+This document replaces the earlier V2 rules that required a DTO schema and excluded composite identifiers. It consolidates the latest agreed schema contract and demonstrated generated output. Validation and acceptance requirements describe the behavior the implementation must satisfy; they are not a claim that every check has already been tested against a repository checkout.
 
-Version 2 extends the original JSON-driven Java entity generator to generate:
+## Contents
 
-- JPA entity classes.
-- Spring Data repository interfaces.
-- Request DTO classes.
-- Response DTO classes.
+1. [Inputs and generation modes](#1-inputs-and-generation-modes)
+2. [Architecture and processing](#2-architecture-and-processing)
+3. [Entity schema](#3-entity-schema)
+4. [Naming and collisions](#4-naming-and-collisions)
+5. [Data types](#5-data-types)
+6. [Primary keys](#6-primary-keys)
+7. [Relationship contract](#7-relationship-contract)
+8. [Stage 1 MapsId](#8-stage-1-mapsid)
+9. [Foreign-key column handling](#9-foreign-key-column-handling)
+10. [Microservice boundaries](#10-microservice-boundaries)
+11. [DTO schema](#11-dto-schema)
+12. [Repositories](#12-repositories)
+13. [Complete examples](#13-complete-examples)
+14. [Output and diagnostics](#14-output-and-diagnostics)
+15. [Validation and acceptance](#15-validation-and-acceptance)
+16. [Limits and change management](#16-limits-and-change-management)
 
-V2 uses two independent JSON files:
+## 1. Inputs and generation modes
 
-- `schema/entity-schema.json` — database tables, columns, primary keys, and entity relationships.
-- `schema/dto-schema.json` — the exact API-facing DTO classes and fields to generate.
+| Input | Required | Responsibility |
+|---|---|---|
+| `schema.json` | Yes | Tables, fields, keys, and owning relationships |
+| `dto-schema.json` | No | Explicit request and response DTO definitions |
 
-The entity schema is the source of truth for persistence structure. The DTO schema is the source of truth for DTO structure and field selection. Do not merge these schemas.
+File locations are configured by the application. `entity-schema.json` is also a usable filename when configured; the filename itself does not change the JSON contract.
 
-## 2. Architecture and responsibilities
+| Supplied configuration | Expected output |
+|---|---|
+| Entity schema only | Entities, required embeddable ID classes, repositories |
+| Entity schema and valid DTO schema | All persistence artifacts plus declared DTOs |
+| No DTO schema configured | Skip DTO parsing, validation, and generation |
+| DTO schema explicitly configured but missing or invalid | Report the error; do not silently skip it |
 
-```text
-entity-schema.json              dto-schema.json
-        |                              |
-   SchemaParser                 DtoSchemaParser
-        |                              |
-  SchemaValidator              DtoSchemaValidator
-        |                              |
-        +-----------+------------------+
-                    |
-             DataTypeMapper
-                    |
-           RelationshipResolver
-                    |
-       +------------+-------------+
-       |            |             |
- EntityGenerator  RepositoryGenerator
-       |            |             |
-       +------------+-------------+
-                    |
-               DtoGenerator
-                    |
-              SourceFileWriter
-                    |
-             Generated Java files
-```
+Do not require an empty DTO file to enable entity-only generation. An absent optional input and a malformed supplied input are different cases.
+
+## 2. Architecture and processing
 
 | Component | Responsibility |
 |---|---|
-| `SchemaParser` | Parses entity JSON into entity schema models. |
-| `SchemaValidator` | Validates entity schema structure, fields, keys, and relationships. |
-| `DataTypeMapper` | Maps supported database types to Java types and imports. |
-| `RelationshipResolver` | Resolves and validates entity relationships. |
-| `EntityGenerator` | Generates JPA entity source code. |
-| `RepositoryGenerator` | Generates Spring Data repository interfaces. |
-| `DtoSchema` / DTO model classes | Represent DTO schema definitions. |
-| `DtoSchemaParser` | Parses the separate DTO JSON. |
-| `DtoSchemaValidator` | Validates DTO definitions and their references to entities. |
-| `DtoFieldTypeResolver` | Derives DTO field types from entity fields and relationships. |
-| `DtoGenerator` | Generates request and response DTO source code. |
-| `SourceFileWriter` | Writes generated files to the output directory. |
-| `Main` | Orchestrates the complete pipeline; it must not contain generator logic. |
+| `Main` | Coordinate configured inputs and the generation pipeline |
+| `SchemaParser` | Parse the entity JSON |
+| `SchemaValidator` | Validate tables, columns, keys, names, and relationship rules |
+| `DataTypeMapper` | Resolve database types to Java types |
+| `RelationshipResolver` | Resolve owning/inverse associations and derived-ID metadata |
+| `EntityGenerator` | Generate entities and embeddable identifier classes |
+| `RepositoryGenerator` | Generate repository interfaces with the correct ID type |
+| `DtoSchemaParser` | Parse the supplied optional DTO schema |
+| `DtoSchemaValidator` | Validate DTO selectors against entity metadata |
+| `DtoFieldTypeResolver` | Derive scalar and relationship identifier types |
+| `DtoGenerator` | Generate declared DTO classes |
+| `SourceFileWriter` | Write validated generated sources |
 
-Keep these responsibilities separate. Do not move parsing, validation, type mapping, relationship resolution, or file writing into the generators.
+Required dependency order:
 
-## 3. Processing order
+1. Parse and validate the mandatory entity schema.
+2. Resolve field types, primary-key metadata, and relationships.
+3. If a DTO input is supplied, parse and validate it against the resolved model.
+4. Generate entities, composite ID classes where needed, and repositories.
+5. Generate DTOs only when requested.
+6. Collect sources, detect duplicate output paths, and write them.
 
-The required dependency order is:
+All supplied inputs must pass validation before source writing. Keep parsing, validation, resolution, generation, and writing separate.
 
-1. Parse `entity-schema.json`.
-2. Validate the entity schema.
-3. Map database field types.
-4. Resolve entity relationships.
-5. Parse `dto-schema.json`.
-6. Validate DTO definitions against the resolved entity model.
-7. Generate entities.
-8. Generate repositories.
-9. Generate DTOs.
-10. Collect generated sources and detect duplicate output paths.
-11. Write files through `SourceFileWriter`.
+## 3. Entity schema
 
-No source files should be written if a required parsing or validation stage fails.
+### Root and tables
 
----
+| Location | Property | Rule |
+|---|---|---|
+| Root | `schemaVersion` | Use the supported value, currently `"1.0"` in existing schemas |
+| Root | `packageName` | Valid Java package for entities and embeddable IDs |
+| Root | `tables` | Non-empty array |
+| Table | `name` | Unique physical table name |
+| Table | `className` | Unique valid Java entity class name |
+| Table | `fields` | Non-empty array of column definitions |
+| Table | `relationships` | Array of owning relationships; use `[]` when absent |
 
-# Part A — Entity schema
+Do not add speculative properties such as table-level `primaryKeys`, `compositeKey`, or `embeddedId`. Primary-key membership is defined on fields.
 
-## 4. Entity schema root
+### Field properties
 
-The entity schema root must contain:
-
-| Property | Required | Description |
-|---|---:|---|
-| `schemaVersion` | Yes | Supported entity schema version. |
-| `packageName` | Yes | Base package for generated entities. |
-| `tables` | Yes | Non-empty array of table/entity definitions. |
-
-Example:
-
-```json
-{
-    "schemaVersion": "1.0",
-    "packageName": "com.example.generated.entity",
-    "tables": []
-}
-```
-
-Rules:
-
-- `schemaVersion` must be supported.
-- `packageName` must be a valid Java package.
-- `tables` must be a non-empty array.
-- Table names and entity class names must be unique.
-- Reject unknown properties unless explicitly supported by the schema version.
-
-## 5. Table/entity definitions
-
-Each `tables` item represents one database table and one Java entity.
-
-| Property | Required | Description |
-|---|---:|---|
-| `name` | Yes | Physical database table name. |
-| `className` | Yes | Java entity class name. |
-| `fields` | Yes | Database column definitions. |
-| `relationships` | Yes / empty array | Entity relationship definitions. |
-
-Rules:
-
-- `name` must be non-empty.
-- `className` must be a valid Java class identifier.
-- `fields` must contain at least one field.
-- `relationships` must be an array; use `[]` when there are no relationships.
-- Table names and class names must be unique.
-- Prefer `snake_case` for database tables and `PascalCase` for Java classes.
-
-## 6. Field definitions
-
-| Property | Required | Description |
-|---|---:|---|
-| `name` | Yes | Physical database column name. |
-| `type` | Yes | Supported database type. |
-| `primaryKey` | No | Whether this field is the primary key. |
-| `generated` | No | Whether the primary key is generated automatically. |
-| `nullable` | No | Whether the column permits NULL. |
-| `unique` | No | Whether values must be unique. |
-| `length` | Conditional | Length for supported string/binary types. |
-| `precision` | Conditional | Numeric precision. |
-| `scale` | Conditional | Numeric scale. |
-
-Rules:
-
-1. Every field needs a non-empty name and supported type.
-2. Every table must have a primary key.
-3. The initial contract supports a single-column primary key. Composite keys are out of scope until explicitly implemented.
-4. `generated: true` is valid only for a primary key.
-5. `length` is valid only for types that support it.
-6. `precision` and `scale` are valid only for supported numeric types.
-7. `scale` must be non-negative and no greater than `precision`.
-8. Column names must be unique within a table.
-9. Converted Java property names must be valid and collision-free.
-10. JSON booleans must be actual `true`/`false` values, not strings.
-11. Omitted properties must follow documented defaults; the generator must not guess.
-
-Example:
-
-```json
-{
-    "name": "customer_id",
-    "type": "BIGINT",
-    "primaryKey": true,
-    "generated": true,
-    "nullable": false
-}
-```
-
-## 7. Database-to-Java type mapping
-
-Keep this table synchronized with `DataTypeMapper`.
-
-| Database type | Java type |
+| Property | Meaning |
 |---|---|
-| `VARCHAR`, `CHAR`, `TEXT` | `String` |
-| `BIGINT` | `Long` |
-| `INTEGER`, `INT` | `Integer` |
-| `SMALLINT`, `TINYINT` | `Short` |
-| `DECIMAL`, `NUMERIC`, `NUMBER` | `BigDecimal` |
-| `FLOAT`, `DOUBLE` | `Double` |
-| `REAL` | `Float` |
-| `BOOLEAN`, `BOOL`, `BIT` | `Boolean` |
-| `DATE` | `LocalDate` |
-| `TIME` | `LocalTime` |
-| `TIMESTAMP` | `LocalDateTime` |
-| `TIMESTAMP WITH TIME ZONE` | `OffsetDateTime` |
-| `UUID` | `UUID` |
-| `BINARY`, `VARBINARY`, `BLOB` | `byte[]` |
-| `JSON`, `JSONB` | `String` (basic initial mapping) |
+| `name` | Physical database column name |
+| `type` | Database type accepted by `DataTypeMapper` |
+| `primaryKey` | `true` when the column participates in the primary key |
+| `generated` | Whether the supported single-column key is generated |
+| `nullable` | Column nullability |
+| `unique` | Single-column uniqueness |
+| `length` | Length for an applicable type |
+| `precision` | Numeric precision for an applicable type |
+| `scale` | Numeric scale for an applicable type |
 
 Rules:
 
-- Type matching should be case-insensitive.
-- Unsupported types must fail validation; never silently fall back to `String`.
-- Generate required Java imports.
-- Add database-specific aliases explicitly to the mapper.
-- Test every supported mapping.
-
-## 8. Entity relationships
-
-Supported types:
-
-- `ONE_TO_ONE`
-- `ONE_TO_MANY`
-- `MANY_TO_ONE`
-- `MANY_TO_MANY`
-
-Common relationship properties:
-
-| Property | Required | Description |
-|---|---:|---|
-| `type` | Yes | Relationship type. |
-| `field` | Yes | Java relationship property on the current entity. |
-| `target` | Yes | Target entity class name. |
-| `joinColumn` | Conditional | Foreign-key/join column. |
-| `referencedColumn` | No | Target database column referenced by the join column. |
-| `joinTable` | Conditional | Intermediate table for many-to-many. |
-| `inverseJoinColumn` | Conditional | Join-table column referencing the target entity. |
-| `mappedBy` or the agreed inverse-property key | Conditional | Property on the owning side. |
-| `optional` | No | Whether the association is optional. |
-| `fetch` | No | `LAZY` or `EAGER`. |
-
-Rules:
-
-1. `type`, `field`, and `target` are mandatory.
-2. The target entity must exist in the entity schema.
-3. Relationship field names must be valid Java properties.
-4. A relationship field must not collide with a scalar field or another relationship.
-5. `fetch`, when present, must be `LAZY` or `EAGER`.
-6. Referenced columns must exist on the target entity.
-7. Owning and inverse mappings must agree.
-8. `MANY_TO_ONE` normally owns the foreign key.
-9. `ONE_TO_MANY` normally references the owning-side property through `mappedBy`.
-10. `ONE_TO_ONE` must identify its owning side and foreign-key mapping.
-11. `MANY_TO_MANY` must define a join table and both join columns on the owning side.
-
-**Contract compatibility:** Use the exact property names accepted by the current `RelationshipResolver`. Do not maintain competing aliases such as `mappedBy` and `inverseField` for the same concept unless a deliberate schema change is made across model, parser, validator, resolver, examples, and tests.
-
----
-
-# Part B — DTO schema
-
-## 9. Separate DTO schema
-
-DTO definitions must be stored in `schema/dto-schema.json`, not embedded in the entity schema.
-
-This separation allows:
-
-- Multiple DTOs to be created from one entity.
-- Request and response payloads to expose different fields.
-- API models to differ from database structure.
-- DTO validation and generation to evolve independently.
-
-The DTO schema is the source of truth for which API-facing fields are generated.
-
-## 10. DTO schema root
-
-The root must contain:
-
-| Property | Required | Description |
-|---|---:|---|
-| `schemaVersion` | Yes | Supported DTO schema version. |
-| `packageName` | Yes | Base package for generated DTOs. |
-| `dtos` | Yes | Array of DTO definitions. |
-
-Example:
-
-```json
-{
-    "schemaVersion": "1.0",
-    "packageName": "com.example.generated.dto",
-    "dtos": []
-}
-```
-
-Rules:
-
-- `schemaVersion` must be supported.
-- `packageName` must be a valid Java package.
-- `dtos` must be a non-empty array when DTO generation is requested.
-- DTO names must be unique.
-- Reject unknown properties unless explicitly supported.
-
-## 11. DTO definitions
-
-Each DTO object has:
-
-| Property | Required | Description |
-|---|---:|---|
-| `name` | Yes | Complete Java DTO class name. |
-| `sourceEntity` | Yes | Entity `className` from the entity schema. |
-| `type` | Yes | `REQUEST` or `RESPONSE`. |
-| `fields` | Yes | Ordered list of DTO fields. |
-
-Rules:
-
-1. `name` must be a valid Java class identifier.
-2. `sourceEntity` must match an existing entity class.
-3. `type` must be exactly `REQUEST` or `RESPONSE`.
-4. `fields` must contain at least one field.
-5. DTO names must be unique.
-6. Only explicitly listed fields are generated. Never copy all entity fields automatically.
-7. Preserve DTO field order from the JSON where practical.
-
-## 12. DTO field definitions
-
-Each DTO field must refer to exactly one source:
-
-- `sourceField`: a scalar Java property on the source entity.
-- `sourceRelationship`: a relationship property on the source entity.
-
-| Property | Required | Description |
-|---|---:|---|
-| `name` | Yes | Generated DTO property name. |
-| `sourceField` | Exactly one selector | Java property name of a scalar entity field. |
-| `sourceRelationship` | Exactly one selector | Java property name of an entity relationship. |
-
-Rules:
-
-1. `name` must be a valid Java property identifier.
-2. Exactly one of `sourceField` or `sourceRelationship` must be present.
-3. Both selectors together are invalid.
-4. Omitting both selectors is invalid.
-5. `sourceField` must use the Java property name, not the database column name.
-6. `sourceRelationship` must use the Java relationship property name.
-7. The selected source must exist on `sourceEntity`.
-8. DTO field names must be unique within the DTO.
-9. DTO field names must not collide with generated members.
-10. Arbitrary DTO type overrides are not part of the current V2 contract; types are inferred from the source.
-
-### Scalar field example
-
-If `Customer` has Java properties `customerId`, `customerName`, and `email`:
-
-```json
-{
-    "name": "customerName",
-    "sourceField": "customerName"
-}
-```
-
-Use the Java property name, not the physical database column name such as `customer_name`.
-
-### Relationship field example
-
-If `Account` has a `customer` relationship to `Customer`:
-
-```json
-{
-    "name": "customerId",
-    "sourceRelationship": "customer"
-}
-```
-
-Relationship fields are represented by related identifier values, not nested entity objects, in the current V2 design.
-
-## 13. DTO relationship type resolution
-
-The DTO field type is derived from the relationship cardinality and target entity primary-key Java type.
-
-| Relationship | DTO field type |
-|---|---|
-| `MANY_TO_ONE` | Target primary-key Java type |
-| `ONE_TO_ONE` | Target primary-key Java type |
-| `ONE_TO_MANY` | `List<TargetPrimaryKeyType>` |
-| `MANY_TO_MANY` | `List<TargetPrimaryKeyType>` |
-
-Examples:
-
-- If `Account.customer` is `MANY_TO_ONE` and `Customer.customerId` is `Long`, generate `Long customerId`.
-- If `Customer.accounts` is `ONE_TO_MANY` and `Account.accountId` is `Long`, generate `List<Long> accountIds`.
-
-Rules:
-
-1. The target entity must exist.
-2. The target entity must have a resolvable primary key.
-3. Resolve the key's Java type using the same type mapping as entity generation.
-4. Collection relationships use `List` with the correct generic type and import.
-5. Do not expose a related entity object for these relationship selectors under the current V2 mapping.
-6. If the target or key cannot be resolved, fail with a useful validation error.
-
-## 14. DTO package and generated class rules
-
-DTO package is determined by `type`:
-
-| `type` | Generated package |
-|---|---|
-| `REQUEST` | `<packageName>.request` |
-| `RESPONSE` | `<packageName>.response` |
-
-For base package `com.example.generated.dto`:
-
-- Request DTO: `com.example.generated.dto.request`
-- Response DTO: `com.example.generated.dto.response`
-
-Rules:
-
-1. `name` is the complete class name; do not silently append or remove suffixes.
-2. Derive package names consistently.
-3. DTO classes must be public.
-4. Generate only fields declared in the DTO JSON.
-5. Generate getters and setters for each field, as required by the current `DtoGenerator`.
-6. Generate required imports, including `java.util.List` for collection fields and relevant scalar imports.
-
-## 15. DTO validation
-
-`DtoSchemaValidator` must validate the DTO schema against the parsed, validated, and relationship-resolved entity model.
-
-It must check:
-
-- Required root properties and JSON value types.
-- Valid DTO package name.
-- Valid and unique DTO class names.
-- Existing `sourceEntity`.
-- `type` is `REQUEST` or `RESPONSE`.
-- Non-empty DTO fields.
-- Valid and unique DTO property names.
-- Exactly one of `sourceField` and `sourceRelationship`.
-- `sourceField` exists on the source entity.
-- `sourceRelationship` exists on the source entity.
-- Relationship targets exist.
-- Target primary keys exist and their Java types can be resolved.
-- Collection relationships resolve to `List<PK>`.
-- Unsupported properties are rejected.
-
-DTO validation must finish before DTO source files are written.
-
----
-
-# Part C — Repository generation
-
-## 16. Repository purpose and convention
-
-Generate one Spring Data repository interface for every valid entity.
-
-Recommended convention:
-
-- Interface name: `<EntityClassName>Repository`
-- Package: `<entity package>.repository`
-- Base interface: `JpaRepository<EntityClassName, PrimaryKeyJavaType>`
-
-Example:
-
-```java
-package com.example.generated.entity.repository;
-
-import com.example.generated.entity.Customer;
-import org.springframework.data.jpa.repository.JpaRepository;
-
-public interface CustomerRepository
-        extends JpaRepository<Customer, Long> {
-}
-```
-
-## 17. Repository rules
-
-1. Generate one repository interface per entity.
-2. Repository names must be unique.
-3. Every repository must reference an existing generated entity.
-4. The repository ID generic type must match the entity primary-key Java type.
-5. Generate the correct entity and `JpaRepository` imports.
-6. Do not invent custom finder methods.
-7. Fail if an entity has no valid primary key.
-8. Do not modify or duplicate entity definitions.
-9. Generate interfaces, not implementation classes.
-10. Write files under the package-derived directory.
-
-The baseline V2 repository contract is `JpaRepository<Entity, ID>`. Custom finder methods, query annotations, projections, paging helpers, and custom repository implementations are out of scope unless explicitly added.
-
----
-
-# Part D — Main orchestration and file output
-
-## 18. Main orchestration rules
-
-`Main` coordinates components and does not duplicate their internal logic.
-
-It must:
-
-1. Load both JSON files from configured paths.
-2. Stop if either parser fails.
-3. Validate the entity schema.
-4. Resolve entity relationships.
-5. Parse and validate the DTO schema against the resolved entity model.
-6. Generate entities, repositories, and DTOs only after validation succeeds.
-7. Collect generated sources using consistent output-path keys.
-8. Detect duplicate output paths before writing.
-9. Pass the combined generated sources to `SourceFileWriter`.
-10. Report success only after writing completes.
-
-## 19. Output directory and package layout
-
-Generated files must follow Java package directory conventions.
-
-Recommended structure:
-
-```text
-generated/
-└── src/
-    └── main/
-        └── java/
-            └── com/
-                └── example/
-                    └── generated/
-                        ├── entity/
-                        │   ├── Customer.java
-                        │   └── Account.java
-                        ├── entity/
-                        │   └── repository/
-                        │       ├── CustomerRepository.java
-                        │       └── AccountRepository.java
-                        └── dto/
-                            ├── request/
-                            │   └── CreateCustomerDto.java
-                            └── response/
-                                └── CustomerResponseDto.java
-```
-
-This example assumes entity package `com.example.generated.entity`, repository package `com.example.generated.entity.repository`, and DTO base package `com.example.generated.dto`.
-
-Rules:
-
-1. Package declaration must match the directory structure.
-2. Each public Java class/interface must be written to its own correctly named `.java` file.
-3. Do not write if validation fails.
-4. Detect duplicate target paths before writing.
-5. Do not silently overwrite unrelated files.
-6. Prefer staging generated output and completing the write only after generation succeeds.
-7. Use UTF-8 encoding.
-8. Output must be deterministic.
-
----
-
-# Part E — Shared naming, JSON, and error rules
-
-## 20. Naming conventions
+- Every table has at least one primary-key field.
+- Use actual JSON booleans, not quoted boolean strings.
+- Column names and converted Java names must be unique.
+- Specify key and association nullability explicitly in new schemas.
+- A primary-key component cannot be nullable.
+- `generated: true` is invalid for non-key fields and composite-key components.
+- Use positive lengths and precision; scale must be non-negative and no larger than precision.
+- Omit irrelevant optional properties.
+- Do not encode a multi-column unique constraint using `unique: true` on each component; that would express separate single-column constraints.
+
+## 4. Naming and collisions
 
 | Element | Convention | Example |
 |---|---|---|
-| Database table | `snake_case` | `customer_account` |
-| Database column | `snake_case` | `customer_name` |
-| Entity class | `PascalCase` | `CustomerAccount` |
-| Java property | `camelCase` | `customerName` |
-| Relationship property | `camelCase` | `customer` |
-| Repository | `PascalCase` + `Repository` | `CustomerRepository` |
-| DTO class | `PascalCase` | `CustomerResponseDto` |
-| DTO property | `camelCase` | `customerName` |
-| Package | lowercase | `com.example.generated` |
+| Database table/column | `snake_case` | `user_roles`, `assigned_by` |
+| Entity | `PascalCase` | `UserRole` |
+| Scalar Java property | `camelCase` | `assignedBy` |
+| Relationship property | Explicit Java identifier | `assignedByUser` |
+| Embedded-ID class | `<Entity>Id` | `UserRoleId` |
+| Embedded-ID entity property | `id` | `UserRoleId id` |
+| Repository | `<Entity>Repository` | `UserRoleRepository` |
 
-Rules:
+Use valid identifiers and reject Java keywords. Check names after conversion and include generated classes, the embedded `id` property, and inverse relationship fields in collision checks.
 
-- Generated identifiers must be valid Java identifiers.
-- Java reserved keywords must not be used.
-- Name conversion must be deterministic.
-- Detect collisions after conversion.
-- Scalar fields and relationship properties must not collide.
-- Generated class names must not collide within a package.
+### The assigned_by conflict
 
-## 21. JSON formatting rules
+A scalar column `assigned_by` converts to `assignedBy`. Naming its relationship `assignedBy` can fail validation even if scalar-FK suppression would later remove that scalar property.
 
-1. Use double quotes for keys and string values.
-2. Do not include comments or trailing commas.
-3. Use JSON booleans and `null`, not quoted equivalents.
-4. Use consistent indentation; four spaces are recommended.
-5. Do not duplicate object property names.
-6. Use the expected JSON type for every property.
-7. Reject unknown properties unless explicitly supported.
-8. Omit unused optional properties; use `null` only where explicitly allowed.
-9. Preserve array order where meaningful, especially DTO field order.
+Keep the physical field and use a distinct relationship name:
 
-## 22. Error handling
-
-Errors should identify the schema file and the relevant table, field, relationship, DTO, or DTO field.
-
-Examples:
-
-```text
-Entity schema: table 'account' references unknown target entity 'CustomerProfile'.
-
-DTO schema: DTO 'AccountResponseDto' field 'customerId'
-must define exactly one of 'sourceField' or 'sourceRelationship'.
-
-DTO schema: DTO 'CustomerResponseDto' references unknown source field
-'customerFullName' on entity 'Customer'.
+```json
+{
+  "type": "MANY_TO_ONE",
+  "field": "assignedByUser",
+  "target": "User",
+  "joinColumn": "assigned_by",
+  "referencedColumn": "user_id",
+  "fetch": "LAZY"
+}
 ```
 
+Use descriptive `camelCase`; changing capitalization alone is not a reliable collision fix. Update DTO relationship selectors when renaming a relationship.
+
+## 5. Data types
+
+The installed `DataTypeMapper` is authoritative. Earlier documentation listed aliases more broadly than the demonstrated implementation; do not infer support from a database accepting a type.
+
+| Database type | Java representation / authoring rule |
+|---|---|
+| `VARCHAR`, `CHAR`, `TEXT`, `CLOB`, `NVARCHAR` | `String` in the discussed mapper |
+| `UUID` | `java.util.UUID` |
+| `INTEGER` | `Integer` |
+| `BIGINT` | `Long` |
+| `BOOLEAN` | `Boolean` |
+| `DECIMAL`, `NUMERIC` | `java.math.BigDecimal` |
+| `DATE` | `java.time.LocalDate` |
+| `TIMESTAMPTZ` | `java.time.OffsetDateTime` |
+| `VARBINARY` | Binary representation supported by the mapper; use instead of unsupported `BYTEA` |
+| `JSON`, `JSONB` | Basic `String` mapping in the existing contract; native JSON persistence needs separate support |
+| `SMALLINT` | Earlier revisions differed between `Integer` and `Short`; check the current mapper |
+| `INET`, `TEXT[]` | Used in recent schemas, but support must be checked in the current mapper |
+
+Aliases such as `INT`, `NUMBER`, `BOOL`, `BIT`, `TINYINT`, timestamp variants, and additional binary/floating types are valid only when implemented. Do not silently substitute `String` for unsupported types. Java type mapping alone does not guarantee correct database-specific JDBC binding.
+
+The mapping must be consistent across entity fields, ID components, repositories, and DTOs.
+
+## 6. Primary keys
+
+### Single-column key
+
+Exactly one `primaryKey: true` field produces a normal `@Id` property.
+
+For a supported generated numeric key, `generated: true` produces the implemented `@GeneratedValue(strategy = GenerationType.IDENTITY)` behavior. Do not use identity generation for UUIDs or assume a UUID strategy exists. Assigned keys must be populated by the application.
+
+### Composite key
+
+Two or more fields with `primaryKey: true` produce:
+
+- A public `<Entity>Id` class in the entity package.
+- `@Embeddable` and `Serializable`.
+- `serialVersionUID`.
+- Scalar key components with their physical `@Column` mappings.
+- Getters, setters, and `equals`/`hashCode` covering every key component.
+- A JPA-compatible no-argument constructor, explicit or implicit.
+- An entity property `@EmbeddedId private <Entity>Id id;`.
+
+Composite-key columns live inside the ID class. Do not also emit them as ordinary scalar properties on the entity. Non-key fields remain on the entity.
+
+Do not generate `@GeneratedValue` on composite components. Do not use entity relationships as embeddable scalar components in Stage 1. The supported strategy is `@EmbeddedId`, not `@IdClass`.
+
+For application code, access a component through `entity.getId().getUserId()`; a flat `entity.getUserId()` is not implied.
+
+## 7. Relationship contract
+
+Declare the owning side. The current supported explicit types are:
+
+| JSON `type` | Owning mapping | Generated inverse when `inverseField` is provided |
+|---|---|---|
+| `MANY_TO_ONE` | `@ManyToOne` with `@JoinColumn` | Target `@OneToMany(mappedBy = "<field>")` |
+| `ONE_TO_ONE` | `@OneToOne` with `@JoinColumn` | Target inverse `@OneToOne(mappedBy = "<field>")` |
+| `MANY_TO_MANY` | `@ManyToMany` with `@JoinTable` | Target inverse `@ManyToMany(mappedBy = "<field>")` |
+
+Do not explicitly declare `ONE_TO_MANY` in input JSON. It is generated from a `MANY_TO_ONE` association's `inverseField`. Do not declare the inverse again on the target table.
+
+### Properties
+
+| Property | Rule |
+|---|---|
+| `type` | One of the three explicit owning types above |
+| `field` | Owning entity's Java relationship property |
+| `target` | Exact target `className` in this schema |
+| `joinColumn` | Owning FK column, or owner column of a many-to-many join table |
+| `referencedColumn` | Physical target column for a singular join; supply explicitly in new examples |
+| `joinTable` | Physical join-table name for many-to-many |
+| `inverseJoinColumn` | Target FK column in a many-to-many join table |
+| `inverseField` | Optional Java property generated on the target |
+| `optional` | Association optionality; discussed default is `true` |
+| `fetch` | `LAZY` or `EAGER`; discussed default is `LAZY` |
+| `mapsId` | Embedded-ID component Java name; see Section 8 |
+
+`inverseField` is the JSON property. `mappedBy` is generated JPA metadata, not an interchangeable JSON alias.
+
 Rules:
 
-- Fail fast on invalid input.
-- Do not silently ignore invalid properties.
-- Do not silently substitute unsupported types.
-- Do not write files after validation failure.
-- Keep parsing, validation, resolution, generation, and writing errors distinguishable.
-- Include the underlying cause in diagnostics where useful.
+- Resolve targets within the same entity schema.
+- Validate physical join/referenced columns and compatible types.
+- Keep association optionality consistent with column nullability.
+- Enforce one-to-one uniqueness in the database design; an annotation is not a substitute for reviewing the actual constraint.
+- Detect inverse-field collisions with scalar and generated properties.
+- Multiple links to the same entity need distinct owner and inverse names.
+- A self-reference is permitted when the target is present and names are valid.
+- Do not invent cascade, orphan removal, ordering, or join-column arrays.
+- A many-to-many join table with extra business columns should be modeled as an association entity with two owning relationships.
+
+## 8. Stage 1 MapsId
+
+`mapsId` connects a relationship to a scalar component of the owning entity's composite embedded identifier.
+
+```json
+{
+  "type": "MANY_TO_ONE",
+  "field": "account",
+  "target": "Account",
+  "joinColumn": "account_id",
+  "referencedColumn": "account_id",
+  "mapsId": "accountId",
+  "optional": false,
+  "fetch": "LAZY"
+}
+```
+
+This generates `@MapsId("accountId")`. The value is the Java component name inside `AccountTransactionId`, not the database column `account_id` and not a dotted path such as `id.accountId`.
+
+### Required checks
+
+1. The owner has a composite primary key and an embedded ID.
+2. The relationship is `MANY_TO_ONE` or `ONE_TO_ONE`.
+3. The target has exactly one primary-key column.
+4. `mapsId` identifies an existing embedded-ID component.
+5. `joinColumn` identifies that component's physical column.
+6. `referencedColumn` identifies the target primary key.
+7. Component and target-key Java types agree.
+8. The PK/FK mapping is non-nullable; use `optional: false`.
+9. No duplicate component binding or writable column mapping is generated.
+
+Use `mapsId` when a composite-key component is also the FK represented by the relationship. Do not infer it merely from matching column names, and do not add it to unrelated non-key associations.
+
+### Stage 1 exclusions
+
+- Composite-primary-key parent targets.
+- Multi-column `@JoinColumns`.
+- `@MapsId` on `MANY_TO_MANY`.
+- Empty `@MapsId` for a shared whole identifier.
+- Nested embedded-ID paths.
+- Ordinary single-column shared-primary-key mappings unless separately implemented.
+
+`ResolvedRelationship` carries the resolved `mapsIdKey`. When extending this model, update every constructor call and consumer together.
+
+## 9. Foreign-key column handling
+
+Column metadata stays in `fields` so validation and type resolution can inspect it. Generated entity properties follow these rules:
+
+| Column role | Generated representation |
+|---|---|
+| Ordinary scalar column | Scalar property with `@Column` |
+| Ordinary FK represented by an owning relationship | Relationship; suppress the duplicate scalar property |
+| Composite PK component | Scalar component in `<Entity>Id` |
+| Composite PK component also represented by a relationship | ID component plus relationship with `@MapsId` |
+
+For `assigned_by` with the `assignedByUser` relationship, the normal output is the association, not an additional writable `UUID assignedBy` property.
+
+Suppression happens during generation and does not bypass earlier naming checks. Do not use blanket `insertable = false, updatable = false` as a replacement for correct derived-ID mappings.
+
+## 10. Microservice boundaries
+
+Generate each service's persistence model from its own schema.
+
+A customer, user, account, or transaction identifier owned by another service stays a scalar logical reference unless its entity genuinely belongs to the same persistence boundary and input schema.
+
+Example:
+
+```json
+{
+  "name": "customer_id",
+  "type": "UUID",
+  "nullable": false
+}
+```
+
+Do not invent a local `Customer` entity or JPA association just because a table description mentions another service. Resolve cross-service data through service APIs or events. Only add `inverseField` for real local relationships.
+
+## 11. DTO schema
+
+DTO input is optional and separate from the entity schema.
+
+### Root and definition properties
+
+| Location | Properties |
+|---|---|
+| Root | `schemaVersion`, `packageName`, `dtos` |
+| DTO | `name`, `sourceEntity`, `type`, `fields` |
+| DTO field | `name` and exactly one of `sourceField` / `sourceRelationship` |
+
+Rules:
+
+- `sourceEntity` matches an entity `className`.
+- `type` is exactly `REQUEST` or `RESPONSE`.
+- `name` is the complete DTO class name; do not silently append suffixes.
+- Request classes use `<DTO package>.request`; response classes use `<DTO package>.response`.
+- Generate only explicitly selected fields.
+- Selectors use Java property names, not physical database names.
+- Reject both selectors, neither selector, unknown sources, duplicate names, and unsupported type overrides.
+- Generate public classes, private fields, required imports, getters, and setters.
+- Validate against resolved relationships, including generated inverse relationships.
+
+### Type derivation
+
+| Source | DTO type |
+|---|---|
+| `sourceField` | Java type of the selected schema scalar |
+| Singular relationship to a single-key target | Target scalar ID type |
+| Singular relationship to a composite-key target | `<TargetEntity>Id` |
+| Collection relationship to a single-key target | `List<TargetIdType>` |
+| Collection relationship to a composite-key target | `List<TargetEntityId>` |
+
+Resolve composite ID classes with the entity package, using a correct import or fully qualified name. Do not select the first component as a substitute for a composite identifier.
+
+A scalar selector may refer to an individual schema key component and retains its scalar type. This does not generate an entity-to-DTO mapper or flat entity accessor. Any manually written mapper must read embedded components through `entity.id`, and suppressed FK values through the association as appropriate.
+
+Resolving a composite target ID for a DTO does not add support for composite-parent JPA joins.
+
+## 12. Repositories
+
+Generate one public interface per entity:
+
+```java
+public interface AccountRepository extends JpaRepository<Account, Long> {
+}
+```
+
+For a composite identifier:
+
+```java
+public interface AccountTransactionRepository
+        extends JpaRepository<AccountTransaction, AccountTransactionId> {
+}
+```
+
+Use `<Entity>Repository` and the configured repository package convention; the existing rules recommend `<entity package>.repository`. Import the entity, ID class when needed, and `JpaRepository`.
+
+Do not use `Long`, `Object`, or the first key component as a fallback ID type. Do not invent finder methods, query annotations, or repository implementations.
+
+## 13. Complete examples
+
+### Entity schema: two parent keys and MapsId
+
+The following is a complete entity-schema example.
+
+```json
+{
+  "schemaVersion": "1.0",
+  "packageName": "com.example.banking.entity",
+  "tables": [
+    {
+      "name": "accounts",
+      "className": "Account",
+      "fields": [
+        {
+          "name": "account_id",
+          "type": "BIGINT",
+          "primaryKey": true,
+          "generated": true,
+          "nullable": false
+        }
+      ],
+      "relationships": []
+    },
+    {
+      "name": "transactions",
+      "className": "Transaction",
+      "fields": [
+        {
+          "name": "transaction_id",
+          "type": "BIGINT",
+          "primaryKey": true,
+          "generated": true,
+          "nullable": false
+        }
+      ],
+      "relationships": []
+    },
+    {
+      "name": "account_transaction",
+      "className": "AccountTransaction",
+      "fields": [
+        {
+          "name": "account_id",
+          "type": "BIGINT",
+          "primaryKey": true,
+          "nullable": false
+        },
+        {
+          "name": "transaction_id",
+          "type": "BIGINT",
+          "primaryKey": true,
+          "nullable": false
+        },
+        {
+          "name": "amount",
+          "type": "DECIMAL",
+          "precision": 15,
+          "scale": 2,
+          "nullable": false
+        }
+      ],
+      "relationships": [
+        {
+          "type": "MANY_TO_ONE",
+          "field": "account",
+          "target": "Account",
+          "joinColumn": "account_id",
+          "referencedColumn": "account_id",
+          "mapsId": "accountId",
+          "inverseField": "accountTransactions",
+          "optional": false,
+          "fetch": "LAZY"
+        },
+        {
+          "type": "MANY_TO_ONE",
+          "field": "transaction",
+          "target": "Transaction",
+          "joinColumn": "transaction_id",
+          "referencedColumn": "transaction_id",
+          "mapsId": "transactionId",
+          "inverseField": "accountTransactions",
+          "optional": false,
+          "fetch": "LAZY"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Expected generated artifacts include `Account`, `Transaction`, `AccountTransaction`, `AccountTransactionId`, and three repositories. Both parent entities receive an inverse `accountTransactions` collection.
+
+Entity mapping excerpt, with imports/accessors omitted:
+
+```java
+@Entity
+@Table(name = "account_transaction")
+public class AccountTransaction {
+    @EmbeddedId
+    private AccountTransactionId id;
+
+    @Column(name = "amount", nullable = false, precision = 15, scale = 2)
+    private BigDecimal amount;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @MapsId("accountId")
+    @JoinColumn(name = "account_id",
+                referencedColumnName = "account_id", nullable = false)
+    private Account account;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @MapsId("transactionId")
+    @JoinColumn(name = "transaction_id",
+                referencedColumnName = "transaction_id", nullable = false)
+    private Transaction transaction;
+}
+```
+
+The ID class contains `Long accountId` and `Long transactionId`, their column annotations, accessors, serialization metadata, and value-based equality.
+
+### Optional DTO schema for the same model
+
+```json
+{
+  "schemaVersion": "1.0",
+  "packageName": "com.example.banking.dto",
+  "dtos": [
+    {
+      "name": "AccountTransactionResponseDto",
+      "sourceEntity": "AccountTransaction",
+      "type": "RESPONSE",
+      "fields": [
+        { "name": "accountId", "sourceRelationship": "account" },
+        { "name": "transactionId", "sourceRelationship": "transaction" },
+        { "name": "amount", "sourceField": "amount" }
+      ]
+    },
+    {
+      "name": "AccountResponseDto",
+      "sourceEntity": "Account",
+      "type": "RESPONSE",
+      "fields": [
+        { "name": "accountId", "sourceField": "accountId" },
+        {
+          "name": "accountTransactionIds",
+          "sourceRelationship": "accountTransactions"
+        }
+      ]
+    }
+  ]
+}
+```
+
+The first DTO uses `Long`, `Long`, and `BigDecimal`. The second uses `Long` and `List<AccountTransactionId>`.
+
+### Many-to-many owning declaration
+
+Use this form only when both target entities are present, their keys fit the supported single-column join model, and the join table has no extra business state:
+
+```json
+{
+  "type": "MANY_TO_MANY",
+  "field": "roles",
+  "target": "Role",
+  "joinTable": "user_role_links",
+  "joinColumn": "user_id",
+  "inverseJoinColumn": "role_id",
+  "inverseField": "users",
+  "fetch": "LAZY"
+}
+```
+
+For an association such as `UserRole` with `assigned_by` and `assigned_at`, use an explicit entity instead.
+
+## 14. Output and diagnostics
+
+- Use `jakarta.persistence` imports.
+- Write one correctly named public type per Java source file.
+- Match package declarations to directory paths.
+- Place embeddable ID classes alongside their entities.
+- Detect duplicate generated class names and output paths before writing.
+- Use UTF-8 and deterministic ordering.
+- Do not overwrite unrelated files silently.
+- Prefer staged writes to avoid partial output.
+- Report success only after writing completes.
+
+When DTO input is absent, an appropriate informational message is:
+
+```text
+DTO schema not provided. Skipping DTO generation.
+```
+
+Errors should identify the input, table/DTO, property, and violated rule. Examples of required diagnostic detail:
+
+```text
+Table 'user_roles': relationship field 'assignedBy'
+conflicts with database field 'assigned_by'.
+
+Table 'account_transaction': mapsId 'account_id' is not an
+embedded-ID Java property; expected 'accountId'.
+
+Table 'account_transaction': mapsId target 'Account'
+must have a single-column primary key.
+
+DTO 'AccountResponseDto': sourceRelationship 'accountTransactions'
+does not exist in the resolved entity model.
+```
+
+Keep actionable validation failures distinct from unexpected internal exceptions.
+
+## 15. Validation and acceptance
+
+The following are verification requirements, not a report of tests run.
+
+### Schema and name validation
+
+- [ ] Root properties, packages, table names, and class names are valid.
+- [ ] Each table has fields and at least one primary-key component.
+- [ ] Database types and numeric/string metadata are supported.
+- [ ] Physical and converted names are unique.
+- [ ] Relationship and inverse fields do not collide.
+- [ ] Generated `id`, ID-class names, and repository names do not collide.
+- [ ] Unknown relationship targets and unsupported properties fail clearly.
+
+### Keys and relationships
+
+- [ ] Single keys generate `@Id` with the correct scalar type.
+- [ ] Composite keys generate a serializable embeddable ID and `@EmbeddedId`.
+- [ ] Composite components are non-nullable and never generated.
+- [ ] ID equality and hash code include every component.
+- [ ] Stage 1 `mapsId` validates owner, component, target, columns, and types.
+- [ ] Unsupported composite-parent joins and many-to-many MapsId fail.
+- [ ] Generated inverse mappings point to the correct owning field.
+- [ ] Ordinary FK scalar suppression does not create duplicate writable columns.
+- [ ] Cross-service logical references stay scalar.
+
+### DTOs and repositories
+
+- [ ] Entity-only generation works without a DTO input.
+- [ ] Explicitly supplied invalid DTO input fails before writes.
+- [ ] DTO selectors use exactly one valid source.
+- [ ] DTO scalar, singular-ID, collection-ID, and composite-ID types resolve correctly.
+- [ ] Repository ID generics match scalar or embedded identifier types.
+- [ ] DTOs import composite ID classes from the entity package.
+
+### End-to-end verification
+
+- [ ] Generate the complete example with and without DTO input.
+- [ ] Compile generated source against the configured Java/JPA/Spring Data dependencies.
+- [ ] Verify persistence-provider metadata for the MapsId example.
+- [ ] Persist/load an association entity and verify both ID components.
+- [ ] Verify equivalent ID objects behave correctly in sets/maps.
+- [ ] Confirm failures leave no newly written partial source set.
+
+## 16. Limits and change management
+
+### Outside the current supported contract
+
+- Composite-parent/multi-column relationship joins.
+- `@IdClass`, nested embedded IDs, and additional MapsId stages.
+- Explicit inverse `ONE_TO_MANY` JSON declarations.
+- Nested DTO object graphs, arbitrary type overrides, and generated mappers.
+- DTO validation annotations, Lombok, records, builders, and configurable constructors.
+- Custom repository queries or finder generation.
+- Database introspection, migration scripts, native JSON binding, and dialect profiles unless separately implemented.
+- Business services, controllers, API endpoints, or automatic cross-service relationships.
+
+Generated ID `equals`/`hashCode` and serialization support are part of the composite-key feature; general configurable entity equality generation remains outside scope.
+
+### Updating the contract
+
+For a contract change, update the model, parser, validator, resolver, generators, examples, ruleset, README, and meaningful tests together. Carry changes to `RelationshipDefinition`, `ResolvedRelationship`, and all constructor calls consistently.
+
+Keep schema version `"1.0"` for the existing accepted examples unless version handling is deliberately changed in the implementation. Document and version future incompatible changes together.
+
+### Changes consolidated in this revision
+
+| Earlier guidance | Updated rule |
+|---|---|
+| DTO schema required | DTO schema optional |
+| Exactly one PK column | One or more PK columns |
+| Composite keys excluded | Generated `@Embeddable` + `@EmbeddedId` |
+| No derived-ID support | Stage 1 `mapsId` for singular joins to single-key parents |
+| Scalar-only repository ID | Scalar ID or generated `<Entity>Id` |
+| Scalar-only relationship DTO ID | Full target ID, including composite ID and `List<ID>` |
+| Ambiguous inverse syntax | Owning declaration plus `inverseField` |
+| Explicit `ONE_TO_MANY` listed | Inverse collection generated from `MANY_TO_ONE` |
+| FK suppression assumed to avoid all conflicts | Validate names first; use `assignedByUser` |
+| All references treated alike | Local JPA association versus cross-service scalar reference |
 
 ---
 
-# Part F — Testing and acceptance criteria
+When authoring JSON, use only implemented property names, explicitly model keys and owning relationships, select DTO fields deliberately, and validate the complete supplied input before writing generated source.
 
-## 23. Unit tests
-
-Each component must be independently testable.
-
-### Entity schema tests
-
-Cover:
-
-- Valid entity schema.
-- Missing root properties.
-- Invalid package name.
-- Duplicate table or entity names.
-- Empty fields.
-- Missing primary key.
-- Unsupported database type.
-- Invalid length, precision, or scale.
-- Duplicate database columns.
-- Invalid Java property names.
-- Unknown relationship target.
-- Invalid join/referenced column.
-- Inconsistent owning/inverse relationship mapping.
-
-### DTO schema tests
-
-Cover:
-
-- Valid request DTO.
-- Valid response DTO.
-- Missing root properties.
-- Invalid package name.
-- Duplicate DTO names.
-- Unknown source entity.
-- Invalid DTO type.
-- Empty DTO fields.
-- Duplicate DTO field names.
-- Both source selectors present.
-- Neither source selector present.
-- Unknown source field.
-- Unknown source relationship.
-- Target entity without a valid primary key.
-- Correct scalar relationship ID type.
-- Correct collection `List<PK>` type.
-
-### Repository generator tests
-
-Cover:
-
-- One repository per entity.
-- Correct entity generic type.
-- Correct primary-key generic type.
-- Correct package and imports.
-- Invalid/missing primary key fails.
-- Duplicate output path is detected.
-
-### File writer tests
-
-Cover:
-
-- Package-to-directory conversion.
-- UTF-8 output.
-- Correct filenames.
-- Duplicate output paths.
-- No write after validation failure.
-- Existing-file/overwrite policy.
-- Failure does not leave inconsistent output where practical.
-
-### End-to-end tests
-
-At least one test must load both schemas and verify that entities, repositories, request DTOs, and response DTOs are generated into the expected packages and paths. Generated source should compile against the configured Java, JPA, and Spring Data dependencies.
-
-## 24. V2 release acceptance checklist
-
-- [ ] Entity schema is parsed and validated independently.
-- [ ] DTO schema is parsed and validated independently.
-- [ ] DTO references are checked against the validated entity model.
-- [ ] Entity relationships are resolved before dependent DTO type derivation.
-- [ ] Entities are generated with supported fields and JPA mappings.
-- [ ] One Spring Data repository is generated per entity.
-- [ ] Repository ID types match entity primary-key Java types.
-- [ ] Request DTOs are generated under `.request`.
-- [ ] Response DTOs are generated under `.response`.
-- [ ] Only explicitly declared DTO fields are generated.
-- [ ] Scalar DTO types derive from source entity fields.
-- [ ] Relationship DTO fields derive from target primary-key types.
-- [ ] Collection relationship DTO fields use `List<PK>`.
-- [ ] DTO getters and setters are generated.
-- [ ] All generated files are collected and written by `SourceFileWriter`.
-- [ ] Invalid input prevents source writing.
-- [ ] Generated output compiles against configured dependencies.
-- [ ] Unit and end-to-end tests cover the supported contract.
-
----
-
-# Part G — Out of scope until explicitly designed
-
-Do not assume these features are supported merely because they may be useful:
-
-- Composite primary keys (`@EmbeddedId`, `@IdClass`).
-- Nested DTOs or nested object graphs.
-- Arbitrary DTO field type overrides.
-- DTO validation annotations (`@NotNull`, `@Size`, `@Email`, etc.).
-- Required, editable, or read-only DTO metadata.
-- Automatic entity-to-DTO or DTO-to-entity mapper generation.
-- Custom repository finder methods and query generation.
-- Pagination-specific repository methods.
-- Lombok annotations.
-- Java records instead of mutable DTO classes.
-- OpenAPI/Swagger annotations.
-- Database introspection or migration generation.
-- Configurable constructors, builders, `equals`, or `hashCode`.
-- Multiple database dialect profiles.
-- Custom source templates.
-
-These features require explicit schema design, implementation, and tests before being considered supported.
-
-## 25. Change management
-
-When changing the V2 JSON contract:
-
-1. Update this ruleset.
-2. Update the schema model.
-3. Update the parser.
-4. Update the validator.
-5. Update type mapping or relationship resolution if affected.
-6. Update the relevant generator.
-7. Update sample JSON files.
-8. Add or update unit and integration tests.
-9. Update the README and release notes.
-10. Increment the schema version for incompatible changes.
-
-Never change a JSON property in only one layer. Documentation, model, parser, validator, resolver, generator, and tests must agree.
-
-## 26. Final design principles
-
-1. **Two schemas, two responsibilities:** entity schema defines persistence; DTO schema defines API payload shape.
-2. **Explicit DTO selection:** only fields named in `dto-schema.json` are generated.
-3. **Validate before generate:** all required schemas and references must be valid before generation.
-4. **Resolve before deriving:** relationship-dependent DTO types are derived from resolved entity metadata.
-5. **Consistent type resolution:** use one source of truth for database and primary-key Java types.
-6. **Independent modules:** parsers, validators, resolvers, generators, and writers remain separate.
-7. **Deterministic output:** identical schemas and generator versions produce identical files.
-8. **No silent fallbacks:** unsupported or ambiguous input produces clear errors.
-9. **Test the contract:** every programmatically enforceable rule should have a test.
-10. **Keep documentation synchronized:** this file is the reference for V2 JSON authoring and implementation behavior.
