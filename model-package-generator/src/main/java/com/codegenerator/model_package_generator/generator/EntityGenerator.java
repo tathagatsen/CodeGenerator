@@ -1,5 +1,6 @@
 package com.codegenerator.model_package_generator.generator;
 
+
 import com.codegenerator.model_package_generator.mapper.DataTypeMapper;
 import com.codegenerator.model_package_generator.model.DatabaseSchema;
 import com.codegenerator.model_package_generator.model.FieldDefinition;
@@ -30,6 +31,12 @@ public class EntityGenerator {
     private static final ClassName COLUMN =
             ClassName.get("jakarta.persistence", "Column");
 
+    private static final ClassName EMBEDDABLE =
+            ClassName.get("jakarta.persistence", "Embeddable");
+
+    private static final ClassName EMBEDDED_ID =
+            ClassName.get("jakarta.persistence", "EmbeddedId");
+
     private static final ClassName MANY_TO_ONE =
             ClassName.get("jakarta.persistence", "ManyToOne");
 
@@ -51,44 +58,91 @@ public class EntityGenerator {
     private static final ClassName FETCH_TYPE =
             ClassName.get("jakarta.persistence", "FetchType");
 
+    private static final ClassName MAPS_ID =
+            ClassName.get("jakarta.persistence", "MapsId");
+
     private final DataTypeMapper dataTypeMapper;
 
     public EntityGenerator(DataTypeMapper dataTypeMapper) {
         this.dataTypeMapper = dataTypeMapper;
     }
 
+    // =========================================================
+    // MAIN GENERATION METHOD
+    // =========================================================
+
     public Map<String, JavaFile> generate(
             DatabaseSchema schema,
             Map<String, List<ResolvedRelationship>> relationships) {
 
-        Map<String, JavaFile> generatedFiles = new java.util.LinkedHashMap<>();
+        Map<String, JavaFile> generatedFiles = new LinkedHashMap<>();
 
         for (TableDefinition table : schema.tables()) {
 
+            List<FieldDefinition> primaryKeyFields = table.fields().stream()
+                    .filter(Objects::nonNull)
+                    .filter(field ->
+                            Boolean.TRUE.equals(field.primaryKey()))
+                    .toList();
+
+            String compositeIdClassName = null;
+
+            // Generate separate ID class for composite primary keys.
+            if (primaryKeyFields.size() > 1) {
+
+                compositeIdClassName = table.className() + "Id";
+
+                TypeSpec idClass = buildCompositeIdClass(
+                        primaryKeyFields,
+                        compositeIdClassName,
+                        schema.packageName()
+                );
+
+                JavaFile idJavaFile = JavaFile.builder(
+                        schema.packageName(),
+                        idClass
+                ).build();
+
+                generatedFiles.put(
+                        compositeIdClassName,
+                        idJavaFile
+                );
+            }
+
+            // Generate entity class.
             TypeSpec entityClass = buildEntity(
                     table,
                     relationships.getOrDefault(
                             table.className(),
                             List.of()
                     ),
-                    schema.packageName()
+                    schema.packageName(),
+                    compositeIdClassName
             );
 
-            JavaFile javaFile = JavaFile.builder(
+            JavaFile entityJavaFile = JavaFile.builder(
                     schema.packageName(),
                     entityClass
             ).build();
 
-            generatedFiles.put(table.className(), javaFile);
+            generatedFiles.put(
+                    table.className(),
+                    entityJavaFile
+            );
         }
 
-        return Map.copyOf(generatedFiles);
+        return generatedFiles;
     }
+
+    // =========================================================
+    // ENTITY GENERATION
+    // =========================================================
 
     private TypeSpec buildEntity(
             TableDefinition table,
             List<ResolvedRelationship> relationships,
-            String packageName) {
+            String packageName,
+            String compositeIdClassName) {
 
         TypeSpec.Builder entityBuilder = TypeSpec
                 .classBuilder(table.className())
@@ -100,23 +154,36 @@ public class EntityGenerator {
                                 .build()
                 );
 
+        boolean hasCompositeKey = compositeIdClassName != null;
+
         // Identify database columns already represented by relationships.
         Set<String> relationshipJoinColumns = new HashSet<>();
 
         for (ResolvedRelationship relationship : relationships) {
+
             if (relationship.owningSide()
                     && relationship.joinColumn() != null) {
+
                 relationshipJoinColumns.add(
-                        normalizeColumnName(relationship.joinColumn())
+                        normalizeColumnName(
+                                relationship.joinColumn()
+                        )
                 );
             }
         }
 
         // Generate basic fields.
         if (table.fields() != null) {
+
             for (FieldDefinition field : table.fields()) {
 
-                // Avoid generating customerId alongside Customer customer.
+                // Composite PK fields are generated inside the ID class.
+                if (hasCompositeKey
+                        && Boolean.TRUE.equals(field.primaryKey())) {
+                    continue;
+                }
+
+                // Avoid generating duplicate FK fields.
                 if (relationshipJoinColumns.contains(
                         normalizeColumnName(field.name()))) {
                     continue;
@@ -126,8 +193,28 @@ public class EntityGenerator {
             }
         }
 
+        // Add @EmbeddedId field for composite primary keys.
+        if (hasCompositeKey) {
+
+            ClassName idClass = ClassName.get(
+                    packageName,
+                    compositeIdClassName
+            );
+
+            FieldSpec embeddedIdField = FieldSpec.builder(
+                            idClass,
+                            "id",
+                            Modifier.PRIVATE
+                    )
+                    .addAnnotation(EMBEDDED_ID)
+                    .build();
+
+            entityBuilder.addField(embeddedIdField);
+        }
+
         // Generate relationship fields.
         for (ResolvedRelationship relationship : relationships) {
+
             entityBuilder.addField(
                     buildRelationshipField(
                             relationship,
@@ -139,19 +226,29 @@ public class EntityGenerator {
         return entityBuilder.build();
     }
 
+    // =========================================================
+    // BASIC FIELD GENERATION
+    // =========================================================
+
     private FieldSpec buildBasicField(FieldDefinition field) {
 
-        Class<?> javaType = dataTypeMapper.getJavaType(field.type());
+        Class<?> javaType =
+                dataTypeMapper.getJavaType(field.type());
 
         FieldSpec.Builder fieldBuilder = FieldSpec
-                .builder(javaType, toCamelCase(field.name()))
+                .builder(
+                        javaType,
+                        toCamelCase(field.name())
+                )
                 .addModifiers(Modifier.PRIVATE);
 
-        // Primary key.
+        // Single-column primary key.
         if (Boolean.TRUE.equals(field.primaryKey())) {
+
             fieldBuilder.addAnnotation(ID);
 
             if (Boolean.TRUE.equals(field.generated())) {
+
                 fieldBuilder.addAnnotation(
                         AnnotationSpec.builder(GENERATED_VALUE)
                                 .addMember(
@@ -165,11 +262,178 @@ public class EntityGenerator {
         }
 
         // Column annotation.
+        fieldBuilder.addAnnotation(buildColumnAnnotation(field));
+
+        return fieldBuilder.build();
+    }
+
+    // =========================================================
+    // COMPOSITE PRIMARY KEY GENERATION
+    // =========================================================
+
+    private TypeSpec buildCompositeIdClass(
+            List<FieldDefinition> primaryKeyFields,
+            String idClassName,
+            String packageName) {
+
+        TypeSpec.Builder idBuilder = TypeSpec
+                .classBuilder(idClassName)
+                .addModifiers(Modifier.PUBLIC)
+                .addAnnotation(EMBEDDABLE)
+                .addSuperinterface(java.io.Serializable.class);
+
+        // serialVersionUID.
+        idBuilder.addField(
+                FieldSpec.builder(
+                                long.class,
+                                "serialVersionUID",
+                                Modifier.PRIVATE,
+                                Modifier.STATIC,
+                                Modifier.FINAL
+                        )
+                        .initializer("1L")
+                        .build()
+        );
+
+        // Public no-argument constructor required by JPA.
+        idBuilder.addMethod(
+                MethodSpec.constructorBuilder()
+                        .addModifiers(Modifier.PUBLIC)
+                        .build()
+        );
+
+        // Generate composite key fields, getters and setters.
+        for (FieldDefinition field : primaryKeyFields) {
+
+            Class<?> javaType =
+                    dataTypeMapper.getJavaType(field.type());
+
+            String propertyName = toCamelCase(field.name());
+
+            FieldSpec idField = FieldSpec.builder(
+                            javaType,
+                            propertyName,
+                            Modifier.PRIVATE
+                    )
+                    .addAnnotation(buildColumnAnnotation(field))
+                    .build();
+
+            idBuilder.addField(idField);
+
+            // Getter.
+            idBuilder.addMethod(
+                    MethodSpec.methodBuilder(
+                                    "get" + capitalize(propertyName)
+                            )
+                            .addModifiers(Modifier.PUBLIC)
+                            .returns(javaType)
+                            .addStatement(
+                                    "return this.$N",
+                                    propertyName
+                            )
+                            .build()
+            );
+
+            // Setter.
+            idBuilder.addMethod(
+                    MethodSpec.methodBuilder(
+                                    "set" + capitalize(propertyName)
+                            )
+                            .addModifiers(Modifier.PUBLIC)
+                            .addParameter(javaType, propertyName)
+                            .addStatement(
+                                    "this.$N = $N",
+                                    propertyName,
+                                    propertyName
+                            )
+                            .build()
+            );
+        }
+
+        // Generate equals().
+        String equalsCondition = primaryKeyFields.stream()
+                .map(field -> {
+                    String property = toCamelCase(field.name());
+
+                    return "Objects.deepEquals(this."
+                            + property + ", that."
+                            + property + ")";
+                })
+                .collect(
+                        java.util.stream.Collectors.joining(" && ")
+                );
+
+        ClassName idClass = ClassName.get(
+                packageName,
+                idClassName
+        );
+
+        MethodSpec equalsMethod = MethodSpec
+                .methodBuilder("equals")
+                .addAnnotation(Override.class)
+                .addModifiers(Modifier.PUBLIC)
+                .returns(boolean.class)
+                .addParameter(Object.class, "other")
+                .beginControlFlow("if (this == other)")
+                .addStatement("return true")
+                .endControlFlow()
+                .beginControlFlow(
+                        "if (other == null || getClass() != other.getClass())"
+                )
+                .addStatement("return false")
+                .endControlFlow()
+                .addStatement(
+                        "$T that = ($T) other",
+                        idClass,
+                        idClass
+                )
+                .addStatement("return $L", equalsCondition)
+                .build();
+
+        idBuilder.addMethod(equalsMethod);
+
+        // Generate hashCode().
+        String hashArguments = primaryKeyFields.stream()
+                .map(field ->
+                        "this." + toCamelCase(field.name()))
+                .collect(
+                        java.util.stream.Collectors.joining(", ")
+                );
+
+        MethodSpec hashCodeMethod = MethodSpec
+                .methodBuilder("hashCode")
+                .addAnnotation(Override.class)
+                .addModifiers(Modifier.PUBLIC)
+                .returns(int.class)
+                .addStatement(
+                        "return $T.hash($L)",
+                        Objects.class,
+                        hashArguments
+                )
+                .build();
+
+        idBuilder.addMethod(hashCodeMethod);
+
+        return idBuilder.build();
+    }
+
+    // =========================================================
+    // COLUMN ANNOTATION
+    // =========================================================
+
+    private AnnotationSpec buildColumnAnnotation(
+            FieldDefinition field) {
+
         AnnotationSpec.Builder columnBuilder =
                 AnnotationSpec.builder(COLUMN)
-                        .addMember("name", "$S", field.name());
+                        .addMember(
+                                "name",
+                                "$S",
+                                field.name()
+                        );
 
         if (field.nullable() != null) {
+
             columnBuilder.addMember(
                     "nullable",
                     "$L",
@@ -178,10 +442,16 @@ public class EntityGenerator {
         }
 
         if (Boolean.TRUE.equals(field.unique())) {
-            columnBuilder.addMember("unique", "$L", true);
+
+            columnBuilder.addMember(
+                    "unique",
+                    "$L",
+                    true
+            );
         }
 
         if (field.length() != null) {
+
             columnBuilder.addMember(
                     "length",
                     "$L",
@@ -190,6 +460,7 @@ public class EntityGenerator {
         }
 
         if (field.precision() != null) {
+
             columnBuilder.addMember(
                     "precision",
                     "$L",
@@ -198,6 +469,7 @@ public class EntityGenerator {
         }
 
         if (field.scale() != null) {
+
             columnBuilder.addMember(
                     "scale",
                     "$L",
@@ -205,10 +477,12 @@ public class EntityGenerator {
             );
         }
 
-        fieldBuilder.addAnnotation(columnBuilder.build());
-
-        return fieldBuilder.build();
+        return columnBuilder.build();
     }
+
+    // =========================================================
+    // RELATIONSHIP FIELD GENERATION
+    // =========================================================
 
     private FieldSpec buildRelationshipField(
             ResolvedRelationship relationship,
@@ -228,6 +502,7 @@ public class EntityGenerator {
         switch (relationship.relationshipType()) {
 
             case "MANY_TO_ONE" -> {
+
                 fieldBuilder = FieldSpec.builder(
                         targetClass,
                         relationship.fieldName(),
@@ -251,6 +526,16 @@ public class EntityGenerator {
                 fieldBuilder.addAnnotation(annotation.build());
 
                 if (relationship.owningSide()) {
+
+                    // Add @MapsId only when explicitly configured.
+                    if (relationship.mapsId() != null
+                            && !relationship.mapsId().isBlank()) {
+
+                        fieldBuilder.addAnnotation(
+                                buildMapsIdAnnotation(relationship)
+                        );
+                    }
+
                     fieldBuilder.addAnnotation(
                             buildJoinColumn(relationship)
                     );
@@ -258,6 +543,7 @@ public class EntityGenerator {
             }
 
             case "ONE_TO_ONE" -> {
+
                 fieldBuilder = FieldSpec.builder(
                         targetClass,
                         relationship.fieldName(),
@@ -274,12 +560,15 @@ public class EntityGenerator {
                                 );
 
                 if (relationship.mappedBy() != null) {
+
                     annotation.addMember(
                             "mappedBy",
                             "$S",
                             relationship.mappedBy()
                     );
+
                 } else {
+
                     annotation.addMember(
                             "optional",
                             "$L",
@@ -290,6 +579,15 @@ public class EntityGenerator {
                 fieldBuilder.addAnnotation(annotation.build());
 
                 if (relationship.owningSide()) {
+
+                    if (relationship.mapsId() != null
+                            && !relationship.mapsId().isBlank()) {
+
+                        fieldBuilder.addAnnotation(
+                                buildMapsIdAnnotation(relationship)
+                        );
+                    }
+
                     fieldBuilder.addAnnotation(
                             buildJoinColumn(relationship)
                     );
@@ -297,6 +595,7 @@ public class EntityGenerator {
             }
 
             case "ONE_TO_MANY" -> {
+
                 fieldBuilder = buildCollectionField(
                         relationship,
                         targetClass
@@ -320,6 +619,7 @@ public class EntityGenerator {
             }
 
             case "MANY_TO_MANY" -> {
+
                 fieldBuilder = buildCollectionField(
                         relationship,
                         targetClass
@@ -335,16 +635,21 @@ public class EntityGenerator {
                                 );
 
                 if (relationship.owningSide()) {
+
                     fieldBuilder.addAnnotation(annotation.build());
+
                     fieldBuilder.addAnnotation(
                             buildJoinTable(relationship)
                     );
+
                 } else {
+
                     annotation.addMember(
                             "mappedBy",
                             "$S",
                             relationship.mappedBy()
                     );
+
                     fieldBuilder.addAnnotation(annotation.build());
                 }
             }
@@ -357,6 +662,10 @@ public class EntityGenerator {
 
         return fieldBuilder.build();
     }
+
+    // =========================================================
+    // COLLECTION FIELD
+    // =========================================================
 
     private FieldSpec.Builder buildCollectionField(
             ResolvedRelationship relationship,
@@ -375,6 +684,20 @@ public class EntityGenerator {
                 .initializer("new $T<>()", ArrayList.class);
     }
 
+    // =========================================================
+    // JOIN COLUMN
+    // =========================================================
+    private AnnotationSpec buildMapsIdAnnotation(
+            ResolvedRelationship relationship) {
+
+        return AnnotationSpec.builder(MAPS_ID)
+                .addMember(
+                        "value",
+                        "$S",
+                        relationship.mapsId()
+                )
+                .build();
+    }
     private AnnotationSpec buildJoinColumn(
             ResolvedRelationship relationship) {
 
@@ -387,6 +710,7 @@ public class EntityGenerator {
                         );
 
         if (relationship.referencedColumn() != null) {
+
             joinColumn.addMember(
                     "referencedColumnName",
                     "$S",
@@ -402,6 +726,10 @@ public class EntityGenerator {
 
         return joinColumn.build();
     }
+
+    // =========================================================
+    // JOIN TABLE
+    // =========================================================
 
     private AnnotationSpec buildJoinTable(
             ResolvedRelationship relationship) {
@@ -443,20 +771,31 @@ public class EntityGenerator {
                 .build();
     }
 
+    // =========================================================
+    // UTILITY METHODS
+    // =========================================================
+
     private String normalizeColumnName(String name) {
+
         return name == null
                 ? ""
-                : name.replace("_", "").toLowerCase();
+                : name.replace("_", "").toLowerCase(Locale.ROOT);
     }
 
     private String toCamelCase(String name) {
 
-        String[] parts = name.toLowerCase().split("_");
+        if (name == null || name.isBlank()) {
+            return "";
+        }
+
+        String[] parts = name.toLowerCase(Locale.ROOT).split("_");
 
         StringBuilder result = new StringBuilder(parts[0]);
 
         for (int i = 1; i < parts.length; i++) {
+
             if (!parts[i].isEmpty()) {
+
                 result.append(
                         Character.toUpperCase(parts[i].charAt(0))
                 ).append(parts[i].substring(1));
@@ -464,5 +803,15 @@ public class EntityGenerator {
         }
 
         return result.toString();
+    }
+
+    private String capitalize(String value) {
+
+        if (value == null || value.isEmpty()) {
+            return value;
+        }
+
+        return Character.toUpperCase(value.charAt(0))
+                + value.substring(1);
     }
 }

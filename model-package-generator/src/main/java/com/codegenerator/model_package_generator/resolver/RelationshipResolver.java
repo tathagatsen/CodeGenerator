@@ -151,7 +151,9 @@ public class RelationshipResolver {
                         relationship.inverseJoinColumn(),
 
                         optional,
-                        fetch
+                        fetch,
+
+                        relationship.mapsId()
                 );
 
         addRelationship(
@@ -243,9 +245,10 @@ public class RelationshipResolver {
                         inverseJoinColumn,
 
                         true,
-                        "LAZY"
-                );
+                        "LAZY",
 
+                        null
+                );
         addRelationship(
                 resolved,
                 target.className(),

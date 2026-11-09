@@ -73,6 +73,10 @@ public class DataTypeMapper {
         mappings.put("JSON", String.class);
         mappings.put("JSONB", String.class);
 
+        // PostgreSQL-specific types
+        mappings.put("TEXT[]", String[].class);
+        mappings.put("INET", String.class);
+
         this.typeMappings = Collections.unmodifiableMap(mappings);
     }
 

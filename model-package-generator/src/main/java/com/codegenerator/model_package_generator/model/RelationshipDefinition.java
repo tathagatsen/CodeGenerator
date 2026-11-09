@@ -15,6 +15,8 @@ public record RelationshipDefinition(
         String inverseField,
 
         Boolean optional,
-        String fetch
+        String fetch,
+
+        String mapsId
 
 ) {}

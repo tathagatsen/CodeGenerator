@@ -19,6 +19,8 @@ public record ResolvedRelationship(
         String inverseJoinColumn,
 
         boolean optional,
-        String fetchType
+        String fetchType,
+
+        String mapsId
 
 ) {}

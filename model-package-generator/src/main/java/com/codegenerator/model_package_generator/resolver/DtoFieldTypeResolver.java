@@ -1,3 +1,4 @@
+
 package com.codegenerator.model_package_generator.resolver;
 
 import com.codegenerator.model_package_generator.mapper.DataTypeMapper;
@@ -141,17 +142,44 @@ public class DtoFieldTypeResolver {
                 relationship.targetClass()
         );
 
-        FieldDefinition primaryKey = findPrimaryKey(targetEntity);
+        // Resolve the target entity's primary-key type.
+        String javaType = resolvePrimaryKeyType(targetEntity, entitySchema);
 
-        String javaType = dataTypeMapper
-                .getJavaType(primaryKey.type())
-                .getCanonicalName();
-
+        // Collection relationships return List<IDType>.
         if (isCollectionRelationship(relationship.relationshipType())) {
             return "java.util.List<" + javaType + ">";
         }
 
         return javaType;
+    }
+
+    private String resolvePrimaryKeyType(
+            TableDefinition entity,
+            DatabaseSchema entitySchema
+    ) {
+
+        List<FieldDefinition> primaryKeys = findPrimaryKeys(entity);
+
+        if (primaryKeys.size() == 1) {
+
+            // Single-column primary key.
+            return dataTypeMapper
+                    .getJavaType(primaryKeys.get(0).type())
+                    .getCanonicalName();
+        }
+
+        // Composite primary key.
+        if (primaryKeys.size() > 1) {
+            return entitySchema.packageName()
+                    + "."
+                    + entity.className()
+                    + "Id";
+        }
+
+        throw new IllegalArgumentException(
+                "Primary key not found for entity: " +
+                        entity.className()
+        );
     }
 
     private TableDefinition findEntity(
@@ -172,20 +200,16 @@ public class DtoFieldTypeResolver {
                 );
     }
 
-    private FieldDefinition findPrimaryKey(TableDefinition entity) {
+    private List<FieldDefinition> findPrimaryKeys(
+            TableDefinition entity
+    ) {
 
         return entity.fields()
                 .stream()
                 .filter(field ->
                         Boolean.TRUE.equals(field.primaryKey())
                 )
-                .findFirst()
-                .orElseThrow(() ->
-                        new IllegalArgumentException(
-                                "Primary key not found for entity: " +
-                                        entity.className()
-                        )
-                );
+                .toList();
     }
 
     private boolean isCollectionRelationship(String relationshipType) {

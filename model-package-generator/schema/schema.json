@@ -1,35 +1,35 @@
 
 {
-  "schemaVersion": "2.0",
-  "packageName": "com.nexbank.account.entity",
+  "schemaVersion": "1.0",
+  "packageName": "com.nexbank.transaction.entity",
   "tables": [
     {
       "name": "customers",
       "className": "Customer",
       "fields": [
         {
-          "name": "id",
+          "name": "customer_id",
           "type": "BIGINT",
           "primaryKey": true,
-          "generated": true
+          "generated": true,
+          "nullable": false
         },
         {
           "name": "first_name",
           "type": "VARCHAR",
-          "length": 100,
-          "nullable": false
-        },
-        {
-          "name": "last_name",
-          "type": "VARCHAR",
+          "primaryKey": false,
+          "generated": false,
+          "nullable": false,
           "length": 100
         },
         {
           "name": "email",
           "type": "VARCHAR",
-          "length": 255,
+          "primaryKey": false,
+          "generated": false,
+          "nullable": false,
           "unique": true,
-          "nullable": false
+          "length": 254
         }
       ],
       "relationships": []
@@ -39,26 +39,35 @@
       "className": "Account",
       "fields": [
         {
-          "name": "id",
+          "name": "account_id",
           "type": "BIGINT",
           "primaryKey": true,
-          "generated": true
+          "generated": true,
+          "nullable": false
         },
         {
           "name": "account_number",
           "type": "VARCHAR",
-          "length": 30,
-          "nullable": false
+          "primaryKey": false,
+          "generated": false,
+          "nullable": false,
+          "unique": true,
+          "length": 30
         },
         {
           "name": "balance",
           "type": "DECIMAL",
-          "precision": 19,
+          "primaryKey": false,
+          "generated": false,
+          "nullable": false,
+          "precision": 15,
           "scale": 2
         },
         {
           "name": "customer_id",
           "type": "BIGINT",
+          "primaryKey": false,
+          "generated": false,
           "nullable": false
         }
       ],
@@ -68,12 +77,57 @@
           "field": "customer",
           "target": "Customer",
           "joinColumn": "customer_id",
-          "referencedColumn": "id",
+          "referencedColumn": "customer_id",
           "inverseField": "accounts",
           "optional": false,
           "fetch": "LAZY"
         }
       ]
+    },
+    {
+      "name": "account_transactions",
+      "className": "AccountTransaction",
+      "fields": [
+        {
+          "name": "account_id",
+          "type": "BIGINT",
+          "primaryKey": true,
+          "generated": false,
+          "nullable": false
+        },
+        {
+          "name": "transaction_id",
+          "type": "BIGINT",
+          "primaryKey": true,
+          "generated": false,
+          "nullable": false
+        },
+        {
+          "name": "amount",
+          "type": "DECIMAL",
+          "primaryKey": false,
+          "generated": false,
+          "nullable": false,
+          "precision": 15,
+          "scale": 2
+        },
+        {
+          "name": "transaction_type",
+          "type": "VARCHAR",
+          "primaryKey": false,
+          "generated": false,
+          "nullable": false,
+          "length": 30
+        },
+        {
+          "name": "transaction_date",
+          "type": "TIMESTAMP",
+          "primaryKey": false,
+          "generated": false,
+          "nullable": false
+        }
+      ],
+      "relationships": []
     }
   ]
 }
