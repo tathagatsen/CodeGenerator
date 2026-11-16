@@ -1,17 +1,22 @@
 package com.codegenerator.model_package_generator;
 
+import com.codegenerator.model_package_generator.generator.ApiGenerator;
 import com.codegenerator.model_package_generator.generator.DtoGenerator;
 import com.codegenerator.model_package_generator.generator.EntityGenerator;
 import com.codegenerator.model_package_generator.generator.RepositoryGenerator;
 import com.codegenerator.model_package_generator.mapper.DataTypeMapper;
 import com.codegenerator.model_package_generator.model.DatabaseSchema;
 import com.codegenerator.model_package_generator.model.ResolvedRelationship;
+import com.codegenerator.model_package_generator.model.api.ApiSchema;
 import com.codegenerator.model_package_generator.model.dto.DtoDefinition;
 import com.codegenerator.model_package_generator.model.dto.DtoSchema;
+import com.codegenerator.model_package_generator.parser.ApiSchemaParser;
 import com.codegenerator.model_package_generator.parser.DtoSchemaParser;
 import com.codegenerator.model_package_generator.parser.SchemaParser;
+import com.codegenerator.model_package_generator.resolver.ApiTypeResolver;
 import com.codegenerator.model_package_generator.resolver.DtoFieldTypeResolver;
 import com.codegenerator.model_package_generator.resolver.RelationshipResolver;
+import com.codegenerator.model_package_generator.validation.ApiSchemaValidator;
 import com.codegenerator.model_package_generator.validation.DtoSchemaValidator;
 import com.codegenerator.model_package_generator.validation.SchemaValidator;
 import com.codegenerator.model_package_generator.writer.SourceFileWriter;
@@ -20,10 +25,11 @@ import com.squareup.javapoet.JavaFile;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class Main {
 
@@ -43,6 +49,7 @@ public class Main {
                     "dto-schema.json"
             );
 
+            Path apiSchemaPath = Path.of("schema", "api-schema.json");
             Path outputPath = Path.of("generated");
 
 
@@ -55,9 +62,7 @@ public class Main {
             System.out.println("Entity JSON parsing successful!");
 
 
-            // 3. Parse DTO schema.
-
-// 3. Parse DTO schema (optional).
+            // 3. Parse DTO schema (optional).
 
             DtoSchema dtoSchema = null;
 
@@ -90,8 +95,6 @@ public class Main {
             System.out.println("Entity schema validation successful!");
 
 
-            // 6. Validate DTO schema against entity schema.
-
             // 6. Validate DTO schema against entity schema (optional).
 
             if (dtoSchema != null) {
@@ -103,6 +106,16 @@ public class Main {
 
                 System.out.println("DTO schema validation successful!");
 
+            }
+
+
+            ApiSchema apiSchema = null;
+            ApiTypeResolver apiTypes = null;
+            if (Files.exists(apiSchemaPath)) {
+                apiSchema = new ApiSchemaParser().parse(apiSchemaPath);
+                apiTypes = new ApiTypeResolver(dtoSchema);
+                new ApiSchemaValidator().validate(apiSchema, apiTypes);
+                System.out.println("API schema validation successful!");
             }
 
 
@@ -160,7 +173,7 @@ public class Main {
 
             Map<String, JavaFile> generatedDtos = new LinkedHashMap<>();
 
-// 11. Generate DTO classes (optional).
+            // 11. Generate DTO classes (optional).
 
             if (dtoSchema != null) {
 
@@ -197,6 +210,11 @@ public class Main {
             }
 
 
+            Map<String, JavaFile> generatedApiFiles = apiSchema == null
+                    ? Map.of()
+                    : new ApiGenerator(apiTypes).generate(apiSchema);
+
+
             // 13. Display generated Java files.
 
             System.out.println("\n========== GENERATED ENTITIES ==========");
@@ -231,14 +249,9 @@ public class Main {
 
             // 14. Combine all generated Java files.
 
-            Map<String, JavaFile> allGeneratedFiles =
-                    new LinkedHashMap<>();
-
-            allGeneratedFiles.putAll(generatedEntities);
-
-            allGeneratedFiles.putAll(generatedRepositories);
-
-            allGeneratedFiles.putAll(generatedDtos);
+            Map<String, JavaFile> allGeneratedFiles = mergeGeneratedFiles(List.of(
+                    generatedEntities, generatedRepositories, generatedDtos, generatedApiFiles
+            ));
 
 
             // 15. Write all generated files to disk.
@@ -269,6 +282,9 @@ public class Main {
             System.out.println(
                     "DTOs generated: " + generatedDtos.size()
             );
+            if (apiSchema != null) {
+                System.out.println("API files generated: " + generatedApiFiles.size());
+            }
 
             System.out.println(
                     "Total Java files generated: " + allGeneratedFiles.size()
@@ -301,5 +317,21 @@ public class Main {
 
             e.printStackTrace();
         }
+    }
+
+    private static Map<String, JavaFile> mergeGeneratedFiles(List<Map<String, JavaFile>> layers) {
+        Map<String, JavaFile> sources = new LinkedHashMap<>();
+        Set<Path> outputPaths = new HashSet<>();
+        for (Map<String, JavaFile> layer : layers) {
+            for (JavaFile file : layer.values()) {
+                String qualifiedName = file.packageName + "." + file.typeSpec.name;
+                Path outputPath = Path.of(file.packageName.replace('.', '/'), file.typeSpec.name + ".java");
+                if (!outputPaths.add(outputPath)) {
+                    throw new IllegalArgumentException("Duplicate generated source path: " + outputPath);
+                }
+                sources.put(qualifiedName, file);
+            }
+        }
+        return sources;
     }
 }

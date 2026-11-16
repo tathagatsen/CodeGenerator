@@ -44,10 +44,7 @@ public class DtoGenerator {
 
         for (DtoDefinition dto : dtoSchema.dtos()) {
 
-            String packageName = resolvePackageName(
-                    dtoSchema.packageName(),
-                    dto.type()
-            );
+            String packageName = dtoSchema.packageNameFor(dto);
 
             TypeSpec dtoClass = generateDtoClass(
                     dto,
@@ -138,26 +135,6 @@ public class DtoGenerator {
                 .addParameter(fieldType, fieldName)
                 .addStatement("this.$N = $N", fieldName, fieldName)
                 .build();
-    }
-
-    private String resolvePackageName(
-            String basePackage,
-            String dtoType
-    ) {
-
-        if (dtoType == null) {
-            throw new IllegalArgumentException(
-                    "DTO type cannot be null."
-            );
-        }
-
-        return switch (dtoType.toUpperCase()) {
-            case "REQUEST" -> basePackage + ".request";
-            case "RESPONSE" -> basePackage + ".response";
-            default -> throw new IllegalArgumentException(
-                    "Unsupported DTO type: " + dtoType
-            );
-        };
     }
 
     private TypeName resolveTypeName(String javaType) {
