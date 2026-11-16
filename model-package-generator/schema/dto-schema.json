@@ -1,0 +1,389 @@
+{
+  "schemaVersion": "1.0",
+  "packageName": "com.nexbank.customer.dto",
+  "dtos": [
+    {
+      "name": "CreateCustomerProfileRequest",
+      "sourceEntity": "Customer",
+      "type": "REQUEST",
+      "fields": [
+        {
+          "name": "firstName",
+          "sourceField": "firstName"
+        },
+        {
+          "name": "lastName",
+          "sourceField": "lastName"
+        },
+        {
+          "name": "dateOfBirth",
+          "sourceField": "dateOfBirth"
+        },
+        {
+          "name": "phone",
+          "sourceField": "phone"
+        }
+      ]
+    },
+    {
+      "name": "UpdateCustomerProfileRequest",
+      "sourceEntity": "Customer",
+      "type": "REQUEST",
+      "fields": [
+        {
+          "name": "firstName",
+          "sourceField": "firstName"
+        },
+        {
+          "name": "lastName",
+          "sourceField": "lastName"
+        },
+        {
+          "name": "dateOfBirth",
+          "sourceField": "dateOfBirth"
+        },
+        {
+          "name": "phone",
+          "sourceField": "phone"
+        }
+      ]
+    },
+    {
+      "name": "GenerateUploadUrlRequest",
+      "sourceEntity": "KycDocument",
+      "type": "REQUEST",
+      "fields": [
+        {
+          "name": "documentType",
+          "sourceField": "documentType"
+        },
+        {
+          "name": "originalFileName",
+          "sourceField": "originalFilename"
+        },
+        {
+          "name": "contentType",
+          "sourceField": "contentType"
+        },
+        {
+          "name": "fileSizeBytes",
+          "sourceField": "fileSize"
+        }
+      ]
+    },
+    {
+      "name": "SubmitAccountApplicationRequest",
+      "sourceEntity": "AccountApplication",
+      "type": "REQUEST",
+      "fields": [
+        {
+          "name": "accountType",
+          "sourceField": "requestedAccountType"
+        }
+      ]
+    },
+    {
+      "name": "CustomerProfileResponse",
+      "sourceEntity": "Customer",
+      "type": "RESPONSE",
+      "fields": [
+        {
+          "name": "customerId",
+          "sourceField": "customerId"
+        },
+        {
+          "name": "userId",
+          "sourceField": "userId"
+        },
+        {
+          "name": "firstName",
+          "sourceField": "firstName"
+        },
+        {
+          "name": "lastName",
+          "sourceField": "lastName"
+        },
+        {
+          "name": "dateOfBirth",
+          "sourceField": "dateOfBirth"
+        },
+        {
+          "name": "phone",
+          "sourceField": "phone"
+        },
+        {
+          "name": "kycStatus",
+          "sourceField": "kycStatus"
+        },
+        {
+          "name": "createdAt",
+          "sourceField": "createdAt"
+        },
+        {
+          "name": "updatedAt",
+          "sourceField": "updatedAt"
+        }
+      ]
+    },
+    {
+      "name": "KycDocumentResponse",
+      "sourceEntity": "KycDocument",
+      "type": "RESPONSE",
+      "fields": [
+        {
+          "name": "documentId",
+          "sourceField": "documentId"
+        },
+        {
+          "name": "customerId",
+          "sourceRelationship": "customer"
+        },
+        {
+          "name": "documentType",
+          "sourceField": "documentType"
+        },
+        {
+          "name": "originalFileName",
+          "sourceField": "originalFilename"
+        },
+        {
+          "name": "contentType",
+          "sourceField": "contentType"
+        },
+        {
+          "name": "fileSizeBytes",
+          "sourceField": "fileSize"
+        },
+        {
+          "name": "uploadStatus",
+          "sourceField": "uploadStatus"
+        },
+        {
+          "name": "uploadedAt",
+          "sourceField": "uploadedAt"
+        }
+      ]
+    },
+    {
+      "name": "AccountApplicationResponse",
+      "sourceEntity": "AccountApplication",
+      "type": "RESPONSE",
+      "fields": [
+        {
+          "name": "applicationId",
+          "sourceField": "applicationId"
+        },
+        {
+          "name": "customerId",
+          "sourceRelationship": "customer"
+        },
+        {
+          "name": "accountType",
+          "sourceField": "requestedAccountType"
+        },
+        {
+          "name": "status",
+          "sourceField": "status"
+        },
+        {
+          "name": "reviewedBy",
+          "sourceField": "reviewedBy"
+        },
+        {
+          "name": "reviewedAt",
+          "sourceField": "reviewedAt"
+        },
+        {
+          "name": "reviewReason",
+          "sourceField": "reviewReason"
+        },
+        {
+          "name": "updatedAt",
+          "sourceField": "updatedAt"
+        }
+      ]
+    },
+    {
+      "name": "AccountApplicationSummaryResponse",
+      "sourceEntity": "AccountApplication",
+      "type": "RESPONSE",
+      "fields": [
+        {
+          "name": "applicationId",
+          "sourceField": "applicationId"
+        },
+        {
+          "name": "accountType",
+          "sourceField": "requestedAccountType"
+        },
+        {
+          "name": "status",
+          "sourceField": "status"
+        },
+        {
+          "name": "reviewedAt",
+          "sourceField": "reviewedAt"
+        },
+        {
+          "name": "reviewReason",
+          "sourceField": "reviewReason"
+        }
+      ]
+    },
+    {
+      "name": "StaffApplicationSummaryResponse",
+      "sourceEntity": "AccountApplication",
+      "type": "RESPONSE",
+      "fields": [
+        {
+          "name": "applicationId",
+          "sourceField": "applicationId"
+        },
+        {
+          "name": "customerId",
+          "sourceRelationship": "customer"
+        },
+        {
+          "name": "accountType",
+          "sourceField": "requestedAccountType"
+        },
+        {
+          "name": "status",
+          "sourceField": "status"
+        }
+      ]
+    },
+    {
+      "name": "ReviewApplicationDecisionResponse",
+      "sourceEntity": "AccountApplication",
+      "type": "RESPONSE",
+      "fields": [
+        {
+          "name": "applicationId",
+          "sourceField": "applicationId"
+        },
+        {
+          "name": "reviewedBy",
+          "sourceField": "reviewedBy"
+        },
+        {
+          "name": "reviewedAt",
+          "sourceField": "reviewedAt"
+        },
+        {
+          "name": "reason",
+          "sourceField": "reviewReason"
+        },
+        {
+          "name": "applicationStatus",
+          "sourceField": "status"
+        }
+      ]
+    },
+    {
+      "name": "StaffReviewHistoryResponse",
+      "sourceEntity": "AccountApplication",
+      "type": "RESPONSE",
+      "fields": [
+        {
+          "name": "applicationId",
+          "sourceField": "applicationId"
+        },
+        {
+          "name": "customerId",
+          "sourceRelationship": "customer"
+        },
+        {
+          "name": "reason",
+          "sourceField": "reviewReason"
+        },
+        {
+          "name": "reviewedBy",
+          "sourceField": "reviewedBy"
+        },
+        {
+          "name": "reviewedAt",
+          "sourceField": "reviewedAt"
+        },
+        {
+          "name": "currentApplicationStatus",
+          "sourceField": "status"
+        }
+      ]
+    },
+    {
+      "name": "AdminCustomerSummaryResponse",
+      "sourceEntity": "Customer",
+      "type": "RESPONSE",
+      "fields": [
+        {
+          "name": "customerId",
+          "sourceField": "customerId"
+        },
+        {
+          "name": "userId",
+          "sourceField": "userId"
+        },
+        {
+          "name": "firstName",
+          "sourceField": "firstName"
+        },
+        {
+          "name": "lastName",
+          "sourceField": "lastName"
+        },
+        {
+          "name": "phone",
+          "sourceField": "phone"
+        },
+        {
+          "name": "kycStatus",
+          "sourceField": "kycStatus"
+        },
+        {
+          "name": "createdAt",
+          "sourceField": "createdAt"
+        }
+      ]
+    },
+    {
+      "name": "AdminCustomerDetailResponse",
+      "sourceEntity": "Customer",
+      "type": "RESPONSE",
+      "fields": [
+        {
+          "name": "customerId",
+          "sourceField": "customerId"
+        },
+        {
+          "name": "userId",
+          "sourceField": "userId"
+        },
+        {
+          "name": "firstName",
+          "sourceField": "firstName"
+        },
+        {
+          "name": "lastName",
+          "sourceField": "lastName"
+        },
+        {
+          "name": "phone",
+          "sourceField": "phone"
+        },
+        {
+          "name": "kycStatus",
+          "sourceField": "kycStatus"
+        },
+        {
+          "name": "createdAt",
+          "sourceField": "createdAt"
+        },
+        {
+          "name": "updatedAt",
+          "sourceField": "updatedAt"
+        }
+      ]
+    }
+  ]
+}
