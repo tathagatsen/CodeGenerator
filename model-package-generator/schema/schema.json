@@ -1,131 +1,114 @@
-
 {
   "schemaVersion": "1.0",
-  "packageName": "com.nexbank.transaction.entity",
+  "packageName": "com.nexbank.customer.entity",
   "tables": [
     {
       "name": "customers",
       "className": "Customer",
       "fields": [
-        {
-          "name": "customer_id",
-          "type": "BIGINT",
-          "primaryKey": true,
-          "generated": true,
-          "nullable": false
-        },
-        {
-          "name": "first_name",
-          "type": "VARCHAR",
-          "primaryKey": false,
-          "generated": false,
-          "nullable": false,
-          "length": 100
-        },
-        {
-          "name": "email",
-          "type": "VARCHAR",
-          "primaryKey": false,
-          "generated": false,
-          "nullable": false,
-          "unique": true,
-          "length": 254
-        }
+        {"name": "customer_id", "type": "UUID", "primaryKey": true},
+        {"name": "user_id", "type": "UUID", "unique": true},
+        {"name": "first_name", "type": "VARCHAR", "length": 100},
+        {"name": "last_name", "type": "VARCHAR", "length": 100},
+        {"name": "date_of_birth", "type": "DATE"},
+        {"name": "phone", "type": "VARCHAR", "length": 20},
+        {"name": "address", "type": "TEXT"},
+        {"name": "kyc_status", "type": "VARCHAR", "length": 30},
+        {"name": "created_at", "type": "TIMESTAMPTZ"},
+        {"name": "updated_at", "type": "TIMESTAMPTZ"},
+        {"name": "version", "type": "BIGINT"}
       ],
       "relationships": []
     },
     {
-      "name": "accounts",
-      "className": "Account",
+      "name": "kyc_documents",
+      "className": "KycDocument",
       "fields": [
-        {
-          "name": "account_id",
-          "type": "BIGINT",
-          "primaryKey": true,
-          "generated": true,
-          "nullable": false
-        },
-        {
-          "name": "account_number",
-          "type": "VARCHAR",
-          "primaryKey": false,
-          "generated": false,
-          "nullable": false,
-          "unique": true,
-          "length": 30
-        },
-        {
-          "name": "balance",
-          "type": "DECIMAL",
-          "primaryKey": false,
-          "generated": false,
-          "nullable": false,
-          "precision": 15,
-          "scale": 2
-        },
-        {
-          "name": "customer_id",
-          "type": "BIGINT",
-          "primaryKey": false,
-          "generated": false,
-          "nullable": false
-        }
+        {"name": "document_id", "type": "UUID", "primaryKey": true},
+        {"name": "customer_id", "type": "UUID"},
+        {"name": "document_type", "type": "VARCHAR", "length": 30},
+        {"name": "s3_object_key", "type": "VARCHAR", "length": 512, "unique": true},
+        {"name": "original_filename", "type": "VARCHAR", "length": 255},
+        {"name": "content_type", "type": "VARCHAR", "length": 100},
+        {"name": "file_size", "type": "BIGINT"},
+        {"name": "upload_status", "type": "VARCHAR", "length": 20},
+        {"name": "uploaded_at", "type": "TIMESTAMPTZ"}
       ],
       "relationships": [
         {
-          "type": "MANY_TO_ONE",
-          "field": "customer",
-          "target": "Customer",
-          "joinColumn": "customer_id",
-          "referencedColumn": "customer_id",
-          "inverseField": "accounts",
-          "optional": false,
-          "fetch": "LAZY"
+          "type": "MANY_TO_ONE", "field": "customer", "target": "Customer",
+          "joinColumn": "customer_id", "referencedColumn": "customer_id",
+          "inverseField": "kycDocuments", "fetch": "LAZY"
         }
       ]
     },
     {
-      "name": "account_transactions",
-      "className": "AccountTransaction",
+      "name": "account_applications",
+      "className": "AccountApplication",
       "fields": [
+        {"name": "application_id", "type": "UUID", "primaryKey": true},
+        {"name": "customer_id", "type": "UUID"},
+        {"name": "requested_account_type", "type": "VARCHAR", "length": 20},
+        {"name": "status", "type": "VARCHAR", "length": 30},
+        {"name": "reviewed_by", "type": "UUID"},
+        {"name": "reviewed_at", "type": "TIMESTAMPTZ"},
+        {"name": "review_reason", "type": "TEXT"},
+        {"name": "created_at", "type": "TIMESTAMPTZ"},
+        {"name": "updated_at", "type": "TIMESTAMPTZ"},
+        {"name": "version", "type": "BIGINT"}
+      ],
+      "relationships": [
         {
-          "name": "account_id",
-          "type": "BIGINT",
-          "primaryKey": true,
-          "generated": false,
-          "nullable": false
-        },
-        {
-          "name": "transaction_id",
-          "type": "BIGINT",
-          "primaryKey": true,
-          "generated": false,
-          "nullable": false
-        },
-        {
-          "name": "amount",
-          "type": "DECIMAL",
-          "primaryKey": false,
-          "generated": false,
-          "nullable": false,
-          "precision": 15,
-          "scale": 2
-        },
-        {
-          "name": "transaction_type",
-          "type": "VARCHAR",
-          "primaryKey": false,
-          "generated": false,
-          "nullable": false,
-          "length": 30
-        },
-        {
-          "name": "transaction_date",
-          "type": "TIMESTAMP",
-          "primaryKey": false,
-          "generated": false,
-          "nullable": false
+          "type": "MANY_TO_ONE", "field": "customer", "target": "Customer",
+          "joinColumn": "customer_id", "referencedColumn": "customer_id",
+          "inverseField": "accountApplications", "fetch": "LAZY"
         }
+      ]
+    },
+    {
+      "name": "application_documents",
+      "className": "ApplicationDocument",
+      "fields": [
+        {"name": "application_id", "type": "UUID", "primaryKey": true},
+        {"name": "document_id", "type": "UUID", "primaryKey": true},
+        {"name": "attached_at", "type": "TIMESTAMPTZ"}
+      ],
+      "relationships": [
+        {
+          "type": "MANY_TO_ONE", "field": "application", "target": "AccountApplication",
+          "joinColumn": "application_id", "referencedColumn": "application_id",
+          "mapsId": "applicationId", "inverseField": "applicationDocuments",
+          "optional": false, "fetch": "LAZY"
+        },
+        {
+          "type": "MANY_TO_ONE", "field": "document", "target": "KycDocument",
+          "joinColumn": "document_id", "referencedColumn": "document_id",
+          "mapsId": "documentId", "inverseField": "applicationDocuments",
+          "optional": false, "fetch": "LAZY"
+        }
+      ]
+    },
+    {
+      "name": "outbox_events",
+      "className": "OutboxEvent",
+      "fields": [
+        {"name": "event_id", "type": "UUID", "primaryKey": true},
+        {"name": "aggregate_id", "type": "UUID"},
+        {"name": "event_type", "type": "VARCHAR", "length": 150},
+        {"name": "payload", "type": "JSONB"},
+        {"name": "created_at", "type": "TIMESTAMPTZ"},
+        {"name": "published_at", "type": "TIMESTAMPTZ"},
+        {"name": "retry_count", "type": "INTEGER"}
+      ],
+      "relationships": []
+    },
+    {
+      "name": "processed_messages",
+      "className": "ProcessedMessage",
+      "fields": [
+        {"name": "consumer_name", "type": "VARCHAR", "length": 100, "primaryKey": true},
+        {"name": "event_id", "type": "UUID", "primaryKey": true},
+        {"name": "processed_at", "type": "TIMESTAMPTZ"}
       ],
       "relationships": []
     }
